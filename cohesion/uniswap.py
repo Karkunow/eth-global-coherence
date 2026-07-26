@@ -124,6 +124,63 @@ def _quote_quoter_v2(cfg: Config, token_in: str, token_out: str, amount_in_wei: 
     )
 
 
+@dataclass(frozen=True)
+class SwapTransaction:
+    """Unsigned calldata from POST /v1/swap -- the transaction Execute
+    would send, if this project ever wired up real execution (it
+    deliberately doesn't, FR-027). Constructing this is read-only: no
+    private key touches this code path, nothing is signed or broadcast.
+    Trading-API-only -- QuoterV2 has no calldata-building endpoint."""
+    to: str
+    data: str
+    value: str
+    chain_id: int
+    gas_limit: str | None
+    max_fee_per_gas: str | None
+    max_priority_fee_per_gas: str | None
+    built_at: str
+
+
+def build_swap_transaction(cfg: Config, token_in: str, token_out: str, amount_in: float) -> SwapTransaction:
+    """Calls /v1/quote then /v1/swap to construct the real unsigned
+    transaction for this trade. Raises QuoteUnavailable if either call
+    fails -- no synthetic calldata fallback (FR-004's posture applies
+    here too, even though this path isn't part of the advisory gate)."""
+    amount_in_wei = int(amount_in * (10 ** DECIMALS[token_in]))
+    payload = {
+        "tokenIn": TOKEN_ADDRESSES[token_in], "tokenOut": TOKEN_ADDRESSES[token_out],
+        "amount": str(amount_in_wei), "type": "EXACT_INPUT",
+        "tokenInChainId": 1, "tokenOutChainId": 1,
+        "swapper": "0x0000000000000000000000000000000000000001",
+        "protocols": ["V3"],
+    }
+    resp = httpx.post(
+        f"{cfg.uniswap_api_base.rstrip('/')}/quote", json=payload,
+        headers={"x-api-key": cfg.uniswap_api_key}, timeout=20.0,
+    )
+    if resp.status_code != 200:
+        raise QuoteUnavailable(f"Trading API quote HTTP {resp.status_code}: {resp.text[:300]}")
+    quote = resp.json().get("quote")
+    if not quote:
+        raise QuoteUnavailable("Trading API quote response had no 'quote' field")
+
+    resp2 = httpx.post(
+        f"{cfg.uniswap_api_base.rstrip('/')}/swap", json={"quote": quote},
+        headers={"x-api-key": cfg.uniswap_api_key}, timeout=20.0,
+    )
+    if resp2.status_code != 200:
+        raise QuoteUnavailable(f"Trading API swap HTTP {resp2.status_code}: {resp2.text[:300]}")
+    tx = resp2.json().get("swap")
+    if not tx:
+        raise QuoteUnavailable("Trading API swap response had no 'swap' field")
+
+    return SwapTransaction(
+        to=tx["to"], data=tx["data"], value=tx.get("value", "0x0"), chain_id=tx.get("chainId", 1),
+        gas_limit=tx.get("gasLimit"), max_fee_per_gas=tx.get("maxFeePerGas"),
+        max_priority_fee_per_gas=tx.get("maxPriorityFeePerGas"), built_at=_now_iso(),
+    )
+
+
 def get_quote(cfg: Config, token_in: str, token_out: str, amount_in: float, fallback_fee_tier: int = 3000) -> Quote:
     """amount_in is in human units (e.g. 1.0 WETH); converted to wei using
     DECIMALS. Trading API primary, QuoterV2 fallback (FR-026)."""

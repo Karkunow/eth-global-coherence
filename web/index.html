@@ -37,6 +37,14 @@
 <p class="tagline">Does your agent's reasoning hold together?</p>
 
 <div class="explain-card">
+  <h2>Your own 0G API key (optional)</h2>
+  <p>Every run below spends real 0G inference calls. Leave this blank to use this deployment's
+    key; fill it in and your calibrations/checks run against your own 0G balance instead —
+    it's sent as a request header, never stored server-side.</p>
+  <input id="own-zg-key" type="password" placeholder="0G API key (optional)" autocomplete="off">
+</div>
+
+<div class="explain-card">
   <h2>The three propositions</h2>
   <div class="ctx-row"><strong>A</strong> = WETH/USDC ends higher in 24h</div>
   <div class="ctx-row"><strong>B</strong> = USDC/WBTC ends higher in 24h</div>
@@ -129,6 +137,8 @@
   </div>
 
   <div id="check-quote" class="small"></div>
+  <button id="show-tx-btn" type="button" style="display:none; margin-top:0.4rem;">Show unsigned transaction for this trade</button>
+  <div id="swap-tx-box" class="small" style="display:none; font-family: ui-monospace, monospace; word-break: break-all; margin-top:0.4rem; padding:0.5rem; background:#8881; border-radius:6px;"></div>
   <div id="check-probe" class="small"></div>
   <div id="check-samples" class="samples" style="display:none"></div>
 
@@ -242,9 +252,16 @@ async function runCalibration(overwrite) {
 
   let sampleCount = 0;
   try {
-    const res = await fetch('/api/calibrate', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-    });
+    const ownKey = document.getElementById('own-zg-key').value.trim();
+    const headers = { 'Content-Type': 'application/json' };
+    if (ownKey) headers['X-Zg-Api-Key'] = ownKey;
+    const res = await fetch('/api/calibrate', { method: 'POST', headers, body: JSON.stringify(body) });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      resultBox.innerHTML = `<div class="result err">${err.detail || res.statusText}</div>`;
+      status.textContent = 'Failed.';
+      return;
+    }
     for await (const { event, data } of parseSSE(res)) {
       if (event === 'probe') {
         probeInfo.textContent = `Probe: ${data.pair.join('/')} → ${data.third} — product ${data.product.toFixed(4)} (${data.valid ? 'valid' : 'INVALID'})`;
@@ -361,6 +378,8 @@ async function runCheck(endpoint) {
   demoBanner.style.display = isDemo ? 'block' : 'none';
   lockExecute('Execute — awaiting coherence check');
   quoteBox.textContent = '';
+  document.getElementById('show-tx-btn').style.display = 'none';
+  document.getElementById('swap-tx-box').style.display = 'none';
   probeBox.textContent = '';
   samplesBox.style.display = 'block';
   samplesBox.innerHTML = '';
@@ -379,7 +398,15 @@ async function runCheck(endpoint) {
   let sampleCount = 0;
   let lastReading = null;
   try {
-    const res = await fetch(endpoint + '?' + params.toString());
+    const ownKey = document.getElementById('own-zg-key').value.trim();
+    const checkHeaders = ownKey ? { 'X-Zg-Api-Key': ownKey } : {};
+    const res = await fetch(endpoint + '?' + params.toString(), { headers: checkHeaders });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      verdictBox.innerHTML = `<div class="result err">${err.detail || res.statusText}</div>`;
+      status.textContent = 'Failed.';
+      return;
+    }
     for await (const { event, data } of parseSSE(res)) {
       if (event === 'demo_notice') {
         demoBanner.style.display = 'block';
@@ -393,6 +420,12 @@ async function runCheck(endpoint) {
         const amtIn = toHuman(data.amount_in, data.token_in);
         const amtOut = toHuman(data.amount_out, data.token_out);
         quoteBox.textContent = `Quote (${data.source}): ${amtIn} ${data.token_in} → ${amtOut} ${data.token_out}  (fee ${data.fee_tier}, gas ~${data.gas_estimate})`;
+        if (data.source === 'trading_api') {
+          const showTxBtn = document.getElementById('show-tx-btn');
+          showTxBtn.style.display = 'inline-block';
+          showTxBtn.dataset.pair = document.getElementById('check-pair').value;
+          showTxBtn.dataset.amount = document.getElementById('check-amount').value;
+        }
       } else if (event === 'probe') {
         probeBox.textContent = `Probe: ${data.pair.join('/')} → ${data.third} — product ${data.product.toFixed(4)} (${data.valid ? 'valid' : 'INVALID'})`;
       } else if (event === 'baseline') {
@@ -462,6 +495,31 @@ async function runCheck(endpoint) {
 
 document.getElementById('check-btn').addEventListener('click', () => runCheck('/api/check'));
 document.getElementById('demo-btn').addEventListener('click', () => runCheck('/api/check-degraded-demo'));
+
+document.getElementById('show-tx-btn').addEventListener('click', async (ev) => {
+  const btn = ev.target;
+  const box = document.getElementById('swap-tx-box');
+  btn.disabled = true;
+  box.style.display = 'block';
+  box.textContent = 'Building unsigned transaction…';
+  try {
+    const params = new URLSearchParams({ pair: btn.dataset.pair, amount: btn.dataset.amount });
+    const res = await fetch('/api/swap-tx?' + params.toString());
+    const tx = await res.json();
+    if (!res.ok) {
+      box.textContent = 'Could not build transaction: ' + (tx.detail?.detail || res.statusText);
+    } else {
+      box.innerHTML = `<div style="font-weight:600; margin-bottom:0.3rem;">⚠ UNSIGNED — never sent, shown for demonstration only</div>` +
+        `to: ${tx.to}<br>value: ${tx.value}<br>chainId: ${tx.chain_id}<br>` +
+        `gasLimit: ${tx.gas_limit}<br>maxFeePerGas: ${tx.max_fee_per_gas}<br>` +
+        `data: ${tx.data}`;
+    }
+  } catch (e) {
+    box.textContent = 'Request failed: ' + e;
+  } finally {
+    btn.disabled = false;
+  }
+});
 document.getElementById('execute-btn').addEventListener('click', () => {
   // No execute/submit/sign path exists in this scope (FR-027) -- the gate
   // and its acknowledgement are the extent of the action. Wallet connection

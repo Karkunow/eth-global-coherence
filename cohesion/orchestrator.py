@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from cohesion import baseline, core, graph_client, triangle
+from cohesion import baseline, core, graph_client, triangle, uniswap
 from cohesion.config import Config
 from cohesion.inference import elicit
 
@@ -202,3 +202,48 @@ def run_calibration(cfg: Config, agent_config: AgentConfig, pair: tuple, reps: i
         "n": stored.n,
         "calibrated_at": stored.calibrated_at,
     })
+
+
+def quote_event(quote: uniswap.Quote) -> ProgressEvent:
+    return ProgressEvent("quote", {
+        "amount_in": quote.amount_in, "amount_out": quote.amount_out,
+        "fee_tier": quote.fee_tier, "gas_estimate": quote.gas_estimate,
+        "pool_address": quote.pool_address, "quoted_at": quote.quoted_at, "source": quote.source,
+    })
+
+
+def run_check(cfg: Config, agent_config: AgentConfig, pair: tuple, amount: float, reps: int,
+              prompt_id: str = "default", path: str = baseline.BASELINES_PATH):
+    """IDLE -> QUOTING -> FETCHING_POOLS -> [product check] -> ELICITING
+    (reps x 3 contexts) -> COMPUTING -> COMPARING -> VERDICT.
+
+    Advisory only -- there is no execute/submit/sign path anywhere in this
+    module (FR-027); the verdict and its acknowledgement are the extent of
+    the action (FR-025).
+    """
+    quote = uniswap.get_quote(cfg, pair[0], pair[1], amount)
+    yield quote_event(quote)
+
+    probe = build_and_validate_probe(cfg, pair)
+    yield probe_event(probe)
+
+    key = baseline.compute_key(
+        agent_config.model, prompt_id, "graph", baseline.probe_descriptor(pair, probe.third)
+    )
+    existing = baseline.load_baseline(key, path=path)
+    if existing:
+        yield ProgressEvent("baseline", {
+            "found": True, "key": existing.key,
+            "mean_incoherence": existing.mean_incoherence, "n": existing.n,
+        })
+    else:
+        yield ProgressEvent("baseline", {"found": False})
+
+    reading, samples_by_context = yield from elicit_contexts(
+        cfg, probe, reps, confidence=cfg.confidence, agent_config=agent_config
+    )
+
+    trials = core.disagreement_sum_trials(samples_by_context)
+    verdict = baseline.compute_verdict(existing, reading, trials, confidence=cfg.confidence)
+
+    yield ProgressEvent("verdict", verdict.to_dict())

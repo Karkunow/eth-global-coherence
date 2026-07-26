@@ -1,0 +1,17 @@
+{
+  "65867fc2c3990cfd6d2415ebd6c97630f2aebf7f89097792c5e0424d7dbb10f5": {
+    "calibrated_at": "2026-07-26T02:56:55Z",
+    "key": "65867fc2c3990cfd6d2415ebd6c97630f2aebf7f89097792c5e0424d7dbb10f5",
+    "mean_disagreement_sum": 1.5154444444444444,
+    "mean_incoherence": 0.2546666666666667,
+    "model": "deepseek-v4-flash",
+    "n": 9,
+    "pair": [
+      "WETH",
+      "USDC"
+    ],
+    "prompt_id": "default",
+    "std_dev": 0.05673867973241695,
+    "third": "WBTC"
+  }
+}

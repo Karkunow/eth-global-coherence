@@ -16,6 +16,21 @@ from cohesion.graph_client import TOKEN_ADDRESSES
 
 DECIMALS = {"WETH": 18, "USDC": 6, "WBTC": 8, "USDT": 6, "DAI": 18}
 
+# Only the wallet sign-and-send *testing* path (build_swap_transaction /
+# get_swap_quote / build_swap_transaction_from_quote) ever uses this --
+# the coherence-check engine itself stays mainnet-only, since its probe
+# triangle is built from The Graph's mainnet Uniswap v3 subgraph data;
+# swapping that chain would change what's actually being measured.
+# Addresses verified live 2026-07-26 via a real Trading API quote
+# (0.001 WETH -> 1.883728 USDC on Base), not from memory.
+CHAIN_TOKEN_ADDRESSES = {
+    1: TOKEN_ADDRESSES,  # Ethereum mainnet
+    8453: {  # Base -- same gas *units* as mainnet, far cheaper gas *price*
+        "WETH": "0x4200000000000000000000000000000000000006",
+        "USDC": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    },
+}
+
 QUOTER_V2_ABI = [{
     "inputs": [{
         "components": [
@@ -141,17 +156,31 @@ class SwapTransaction:
     built_at: str
 
 
-def build_swap_transaction(cfg: Config, token_in: str, token_out: str, amount_in: float) -> SwapTransaction:
-    """Calls /v1/quote then /v1/swap to construct the real unsigned
-    transaction for this trade. Raises QuoteUnavailable if either call
-    fails -- no synthetic calldata fallback (FR-004's posture applies
-    here too, even though this path isn't part of the advisory gate)."""
+_DUMMY_SWAPPER = "0x0000000000000000000000000000000000000001"
+
+
+def get_swap_quote(cfg: Config, token_in: str, token_out: str, amount_in: float,
+                    swapper: str | None = None, chain_id: int = 1) -> dict:
+    """Raw POST /v1/quote response, unparsed -- callers building a
+    real-wallet swap need the full body (isTokenApprovalApplicable,
+    permitData, permitTransaction), not just the parsed Quote dataclass
+    get_quote() returns. `swapper` defaults to a dummy placeholder
+    (read-only calldata inspection); pass a real connected wallet address
+    when a user intends to actually sign, since Permit2 approval state
+    and permitData.values.nonce are both looked up per-address.
+    `chain_id` defaults to mainnet; this function is only ever used by the
+    wallet-testing path, never by the coherence-check engine, so picking
+    a cheaper chain here (e.g. 8453 = Base) doesn't affect what the
+    engine measures."""
+    if chain_id not in CHAIN_TOKEN_ADDRESSES:
+        raise QuoteUnavailable(f"unsupported chain_id {chain_id}")
+    addresses = CHAIN_TOKEN_ADDRESSES[chain_id]
     amount_in_wei = int(amount_in * (10 ** DECIMALS[token_in]))
     payload = {
-        "tokenIn": TOKEN_ADDRESSES[token_in], "tokenOut": TOKEN_ADDRESSES[token_out],
+        "tokenIn": addresses[token_in], "tokenOut": addresses[token_out],
         "amount": str(amount_in_wei), "type": "EXACT_INPUT",
-        "tokenInChainId": 1, "tokenOutChainId": 1,
-        "swapper": "0x0000000000000000000000000000000000000001",
+        "tokenInChainId": chain_id, "tokenOutChainId": chain_id,
+        "swapper": swapper or _DUMMY_SWAPPER,
         "protocols": ["V3"],
     }
     resp = httpx.post(
@@ -160,25 +189,47 @@ def build_swap_transaction(cfg: Config, token_in: str, token_out: str, amount_in
     )
     if resp.status_code != 200:
         raise QuoteUnavailable(f"Trading API quote HTTP {resp.status_code}: {resp.text[:300]}")
-    quote = resp.json().get("quote")
-    if not quote:
+    data = resp.json()
+    if not data.get("quote"):
         raise QuoteUnavailable("Trading API quote response had no 'quote' field")
+    return data
 
-    resp2 = httpx.post(
-        f"{cfg.uniswap_api_base.rstrip('/')}/swap", json={"quote": quote},
+
+def build_swap_transaction_from_quote(cfg: Config, quote: dict, signature: str | None = None,
+                                       permit_data: dict | None = None) -> SwapTransaction:
+    """POST /v1/swap against an already-fetched quote sub-object. Pass
+    signature+permit_data together when the connected wallet has signed
+    the EIP-712 permit (get_swap_quote()'s permitData); omit both for the
+    no-signature/dummy-swapper read-only path -- the API accepts either
+    shape (confirmed live 2026-07-26)."""
+    body = {"quote": quote}
+    if signature and permit_data:
+        body["signature"] = signature
+        body["permitData"] = permit_data
+    resp = httpx.post(
+        f"{cfg.uniswap_api_base.rstrip('/')}/swap", json=body,
         headers={"x-api-key": cfg.uniswap_api_key}, timeout=20.0,
     )
-    if resp2.status_code != 200:
-        raise QuoteUnavailable(f"Trading API swap HTTP {resp2.status_code}: {resp2.text[:300]}")
-    tx = resp2.json().get("swap")
+    if resp.status_code != 200:
+        raise QuoteUnavailable(f"Trading API swap HTTP {resp.status_code}: {resp.text[:300]}")
+    tx = resp.json().get("swap")
     if not tx:
         raise QuoteUnavailable("Trading API swap response had no 'swap' field")
-
     return SwapTransaction(
         to=tx["to"], data=tx["data"], value=tx.get("value", "0x0"), chain_id=tx.get("chainId", 1),
         gas_limit=tx.get("gasLimit"), max_fee_per_gas=tx.get("maxFeePerGas"),
         max_priority_fee_per_gas=tx.get("maxPriorityFeePerGas"), built_at=_now_iso(),
     )
+
+
+def build_swap_transaction(cfg: Config, token_in: str, token_out: str, amount_in: float) -> SwapTransaction:
+    """Calls /v1/quote then /v1/swap with the dummy placeholder swapper --
+    the read-only "show me the calldata" path with no wallet involved.
+    Raises QuoteUnavailable if either call fails -- no synthetic calldata
+    fallback (FR-004's posture applies here too, even though this path
+    isn't part of the advisory gate)."""
+    data = get_swap_quote(cfg, token_in, token_out, amount_in)
+    return build_swap_transaction_from_quote(cfg, data["quote"])
 
 
 def get_quote(cfg: Config, token_in: str, token_out: str, amount_in: float, fallback_fee_tier: int = 3000) -> Quote:

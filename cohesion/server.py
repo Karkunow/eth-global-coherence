@@ -24,7 +24,13 @@ from cohesion.orchestrator import (
     run_check,
     run_check_degraded_demo,
 )
-from cohesion.uniswap import QuoteUnavailable, build_swap_transaction, get_quote
+from cohesion.uniswap import (
+    QuoteUnavailable,
+    build_swap_transaction,
+    build_swap_transaction_from_quote,
+    get_quote,
+    get_swap_quote,
+)
 
 app = FastAPI(title="Cohesion")
 _cfg = load_config()
@@ -135,13 +141,56 @@ def quote(pair: str, amount: float):
 
 @app.get("/api/swap-tx")
 def swap_tx(pair: str, amount: float):
-    """Constructs the real unsigned transaction Execute would send, if
-    this project ever wired up real execution -- it deliberately doesn't
-    (FR-027). Never signed, never broadcast; Trading-API-only (no
-    QuoterV2 fallback -- it has no calldata-building endpoint)."""
+    """Read-only path: constructs the unsigned transaction for this trade
+    using a dummy placeholder address, for display only. Never signed,
+    never broadcast; Trading-API-only (no QuoterV2 fallback -- it has no
+    calldata-building endpoint). This project deliberately has no
+    execute/submit/sign path of its own (FR-027) -- see /api/swap-quote
+    and the POST variant below for the OPT-IN, user-driven wallet flow
+    that puts real signing entirely in the user's own MetaMask, never
+    server-side."""
     x, y = pair.split("-")
     try:
         tx = build_swap_transaction(_cfg, x, y, amount)
+    except QuoteUnavailable as e:
+        raise HTTPException(status_code=503, detail={"error": "QUOTE_UNAVAILABLE", "detail": str(e)}) from e
+    return dataclasses.asdict(tx)
+
+
+@app.get("/api/swap-quote")
+def swap_quote(pair: str, amount: float, swapper: str | None = None, chain_id: int = 1):
+    """Raw /v1/quote body (quote, isTokenApprovalApplicable, permitData,
+    permitTransaction) for the wallet-signing flow -- the UI needs the
+    full shape, not the parsed Quote dataclass /api/quote returns.
+    `swapper` should be the user's real connected wallet address once
+    they intend to sign; Permit2 approval state and the permit nonce are
+    both looked up per-address by the Trading API. `chain_id` defaults to
+    mainnet; pass 8453 for Base to test the sign-and-send flow cheaply --
+    this never affects the coherence-check engine, which stays
+    mainnet-only regardless."""
+    x, y = pair.split("-")
+    try:
+        return get_swap_quote(_cfg, x, y, amount, swapper=swapper, chain_id=chain_id)
+    except QuoteUnavailable as e:
+        raise HTTPException(status_code=503, detail={"error": "QUOTE_UNAVAILABLE", "detail": str(e)}) from e
+
+
+@app.post("/api/swap-tx")
+async def swap_tx_signed(request: Request):
+    """Builds the final signable transaction from a quote the caller
+    already fetched via /api/swap-quote, plus (if Permit2 required it) the
+    signature their wallet produced over its permitData. This server never
+    sees a private key -- the signature arrives already-produced by the
+    caller's own wallet; this endpoint only forwards it to the Trading API
+    and returns the resulting calldata for the caller to send themselves."""
+    body = await request.json()
+    quote = body.get("quote")
+    if not quote:
+        raise HTTPException(status_code=422, detail="body must include 'quote' (from GET /api/swap-quote)")
+    try:
+        tx = build_swap_transaction_from_quote(
+            _cfg, quote, signature=body.get("signature"), permit_data=body.get("permit_data"),
+        )
     except QuoteUnavailable as e:
         raise HTTPException(status_code=503, detail={"error": "QUOTE_UNAVAILABLE", "detail": str(e)}) from e
     return dataclasses.asdict(tx)

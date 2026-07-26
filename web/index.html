@@ -139,6 +139,19 @@
   <div id="check-quote" class="small"></div>
   <button id="show-tx-btn" type="button" style="display:none; margin-top:0.4rem;">Show unsigned transaction for this trade</button>
   <div id="swap-tx-box" class="small" style="display:none; font-family: ui-monospace, monospace; word-break: break-all; margin-top:0.4rem; padding:0.5rem; background:#8881; border-radius:6px;"></div>
+
+  <div id="wallet-row" style="display:none; margin-top:0.4rem;">
+    <select id="wallet-network">
+      <option value="1" selected>Ethereum Mainnet</option>
+      <option value="8453">Base (cheap gas, for testing)</option>
+    </select>
+    <button id="connect-wallet-btn" type="button">Connect Wallet</button>
+    <span class="small" id="wallet-address"></span>
+    <button id="wallet-sign-btn" type="button" style="display:none;">Sign &amp; prepare with wallet</button>
+    <button id="wallet-send-btn" type="button" style="display:none;">Send transaction (real, on-chain)</button>
+    <div id="wallet-status" class="small" style="margin-top:0.3rem;"></div>
+  </div>
+
   <div id="check-probe" class="small"></div>
   <div id="check-samples" class="samples" style="display:none"></div>
 
@@ -380,6 +393,9 @@ async function runCheck(endpoint) {
   quoteBox.textContent = '';
   document.getElementById('show-tx-btn').style.display = 'none';
   document.getElementById('swap-tx-box').style.display = 'none';
+  document.getElementById('wallet-row').style.display = 'none';
+  document.getElementById('wallet-send-btn').style.display = 'none';
+  document.getElementById('wallet-status').textContent = '';
   probeBox.textContent = '';
   samplesBox.style.display = 'block';
   samplesBox.innerHTML = '';
@@ -425,6 +441,10 @@ async function runCheck(endpoint) {
           showTxBtn.style.display = 'inline-block';
           showTxBtn.dataset.pair = document.getElementById('check-pair').value;
           showTxBtn.dataset.amount = document.getElementById('check-amount').value;
+          const walletRow = document.getElementById('wallet-row');
+          walletRow.style.display = 'block';
+          walletRow.dataset.pair = document.getElementById('check-pair').value;
+          walletRow.dataset.amount = document.getElementById('check-amount').value;
         }
       } else if (event === 'probe') {
         probeBox.textContent = `Probe: ${data.pair.join('/')} → ${data.third} — product ${data.product.toFixed(4)} (${data.valid ? 'valid' : 'INVALID'})`;
@@ -520,6 +540,172 @@ document.getElementById('show-tx-btn').addEventListener('click', async (ev) => {
     btn.disabled = false;
   }
 });
+
+// --- Wallet flow: opt-in, real signing, entirely in the user's own MetaMask.
+// This server never sees a private key -- eth_signTypedData_v4 and
+// eth_sendTransaction both happen in the wallet, which shows its own
+// confirmation UI before anything is signed or broadcast. Nothing here
+// runs unless the user clicks Connect Wallet first.
+let connectedWallet = null;
+let preparedTx = null;
+let preparedTxChainId = null;
+
+function toHexQuantity(x) {
+  if (x === null || x === undefined) return undefined;
+  const s = String(x);
+  return s.startsWith('0x') ? s : '0x' + BigInt(s).toString(16);
+}
+
+const KNOWN_NETWORKS = {
+  1: { chainId: '0x1' },
+  8453: {
+    chainId: '0x2105', chainName: 'Base',
+    nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+    rpcUrls: ['https://mainnet.base.org'], blockExplorerUrls: ['https://basescan.org'],
+  },
+};
+
+// Must run before signing/sending -- MetaMask signs and broadcasts on
+// whatever chain it's CURRENTLY active on, regardless of which chain the
+// calldata was built for. Skipping this risks signing Base calldata while
+// the wallet is still on mainnet (or vice versa).
+async function ensureWalletOnChain(chainId) {
+  const net = KNOWN_NETWORKS[chainId];
+  try {
+    await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: net.chainId }] });
+  } catch (e) {
+    if (e.code === 4902 && chainId !== 1) {
+      await window.ethereum.request({ method: 'wallet_addEthereumChain', params: [net] });
+    } else {
+      throw e;
+    }
+  }
+}
+
+document.getElementById('connect-wallet-btn').addEventListener('click', async () => {
+  const status = document.getElementById('wallet-status');
+  if (!window.ethereum) {
+    status.textContent = 'No wallet found — install MetaMask (or another injected wallet) to use this.';
+    return;
+  }
+  try {
+    const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+    connectedWallet = accounts[0];
+    document.getElementById('wallet-address').textContent =
+      connectedWallet.slice(0, 6) + '…' + connectedWallet.slice(-4);
+    document.getElementById('wallet-sign-btn').style.display = 'inline-block';
+    status.textContent = 'Connected.';
+  } catch (e) {
+    status.textContent = 'Connection rejected or failed: ' + (e.message || e);
+  }
+});
+
+document.getElementById('wallet-sign-btn').addEventListener('click', async () => {
+  const status = document.getElementById('wallet-status');
+  const sendBtn = document.getElementById('wallet-send-btn');
+  const row = document.getElementById('wallet-row');
+  const btn = document.getElementById('wallet-sign-btn');
+  if (!connectedWallet) { status.textContent = 'Connect a wallet first.'; return; }
+  btn.disabled = true;
+  sendBtn.style.display = 'none';
+  preparedTx = null;
+  const chainId = parseInt(document.getElementById('wallet-network').value, 10);
+  try {
+    status.textContent = 'Switching wallet to the right network…';
+    await ensureWalletOnChain(chainId);
+
+    status.textContent = 'Fetching quote for your wallet…';
+    const qParams = new URLSearchParams({
+      pair: row.dataset.pair, amount: row.dataset.amount, swapper: connectedWallet, chain_id: chainId,
+    });
+    const qRes = await fetch('/api/swap-quote?' + qParams.toString());
+    const quoteData = await qRes.json();
+    if (!qRes.ok) throw new Error(quoteData.detail?.detail || qRes.statusText);
+
+    // One-time on-chain Permit2 approval, if this wallet hasn't granted it
+    // for this token yet. Real gas-costing transaction; MetaMask shows its
+    // own confirmation before anything sends.
+    if (quoteData.permitTransaction) {
+      status.textContent = 'Approval needed first — confirm the approve transaction in your wallet…';
+      const pt = quoteData.permitTransaction;
+      await window.ethereum.request({
+        method: 'eth_sendTransaction',
+        params: [{
+          from: connectedWallet, to: pt.to, data: pt.data,
+          value: toHexQuantity(pt.value || '0'), gas: toHexQuantity(pt.gasLimit),
+        }],
+      });
+      status.textContent = 'Approval sent. Now signing the permit…';
+    }
+
+    let signature = null;
+    if (quoteData.permitData) {
+      status.textContent = 'Sign the permit message in your wallet…';
+      const pd = quoteData.permitData;
+      const typedData = {
+        domain: pd.domain,
+        primaryType: Object.keys(pd.types)[0],
+        types: {
+          EIP712Domain: [
+            { name: 'name', type: 'string' },
+            { name: 'chainId', type: 'uint256' },
+            { name: 'verifyingContract', type: 'address' },
+          ],
+          ...pd.types,
+        },
+        message: pd.values,
+      };
+      signature = await window.ethereum.request({
+        method: 'eth_signTypedData_v4',
+        params: [connectedWallet, JSON.stringify(typedData)],
+      });
+    }
+
+    status.textContent = 'Building final transaction…';
+    const txRes = await fetch('/api/swap-tx', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ quote: quoteData.quote, signature, permit_data: quoteData.permitData }),
+    });
+    const tx = await txRes.json();
+    if (!txRes.ok) throw new Error(tx.detail?.detail || txRes.statusText);
+
+    preparedTx = tx;
+    preparedTxChainId = chainId;
+    sendBtn.style.display = 'inline-block';
+    status.textContent = 'Ready. Review carefully, then click Send — this will move real funds.';
+  } catch (e) {
+    status.textContent = 'Failed: ' + (e.message || e);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('wallet-send-btn').addEventListener('click', async () => {
+  const status = document.getElementById('wallet-status');
+  const btn = document.getElementById('wallet-send-btn');
+  if (!connectedWallet || !preparedTx) { status.textContent = 'Nothing prepared to send yet.'; return; }
+  btn.disabled = true;
+  try {
+    status.textContent = 'Confirming wallet is still on the right network…';
+    await ensureWalletOnChain(preparedTxChainId);
+    status.textContent = 'Confirm in your wallet…';
+    const txHash = await window.ethereum.request({
+      method: 'eth_sendTransaction',
+      params: [{
+        from: connectedWallet, to: preparedTx.to, data: preparedTx.data,
+        value: toHexQuantity(preparedTx.value || '0'), gas: toHexQuantity(preparedTx.gas_limit),
+        maxFeePerGas: toHexQuantity(preparedTx.max_fee_per_gas),
+        maxPriorityFeePerGas: toHexQuantity(preparedTx.max_priority_fee_per_gas),
+      }],
+    });
+    status.textContent = 'Sent: ' + txHash;
+  } catch (e) {
+    status.textContent = 'Send rejected or failed: ' + (e.message || e);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 document.getElementById('execute-btn').addEventListener('click', () => {
   // No execute/submit/sign path exists in this scope (FR-027) -- the gate
   // and its acknowledgement are the extent of the action. Wallet connection

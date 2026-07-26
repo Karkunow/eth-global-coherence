@@ -161,7 +161,7 @@
     <div class="small">disagreement_sum (perfect coherence = 2.0)</div>
     <div style="position:relative; height:28px; background:#8882; border-radius:4px; margin-top:0.3rem;">
       <div id="gauge-baseline-band" style="position:absolute; top:0; bottom:0; background:#88f4; border-radius:4px;"></div>
-      <div id="gauge-ci-band" style="position:absolute; top:6px; bottom:6px; background:#8888;"></div>
+      <div id="gauge-ci-band" style="position:absolute; top:6px; bottom:6px; background:#f558;"></div>
       <div id="gauge-point" style="position:absolute; top:0; bottom:0; width:2px; background:#000;"></div>
       <div id="gauge-mark-2" style="position:absolute; top:0; bottom:0; width:2px; background:#0a0; right:0;"></div>
     </div>
@@ -205,7 +205,8 @@ async function loadBaselines() {
       box.textContent = 'None yet — run a calibration above.';
       return;
     }
-    box.innerHTML = baselines.map(b =>
+    const sorted = [...baselines].sort((a, b) => a.mean_incoherence - b.mean_incoherence);
+    box.innerHTML = sorted.map(b =>
       `<div>${b.model} / ${b.prompt_id} / ${b.pair.join('-')}→${b.third} — ` +
       `<b>${(b.mean_incoherence * 100).toFixed(1)}% incoherence</b> ` +
       `(n=${b.n}, calibrated ${b.calibrated_at})</div>`
@@ -356,10 +357,14 @@ function renderGauge(reading, baselineData) {
   }
 
   document.getElementById('gauge-legend').textContent =
-    `observed ${reading.disagreement_sum.toFixed(3)}` +
-    (reading.ci_low !== null ? ` [${reading.ci_low.toFixed(3)}, ${reading.ci_high.toFixed(3)}]` : ' (no CI — reps<3)') +
-    (baselineData ? ` · baseline ${baselineData.mean_disagreement_sum.toFixed(3)} ± ${baselineData.std_dev.toFixed(3)}` : ' · no baseline') +
-    ' · green mark = 2.0 (perfect coherence)';
+    `observed value ${reading.disagreement_sum.toFixed(3)}` +
+    (reading.ci_low !== null
+      ? ` with confidence interval [${reading.ci_low.toFixed(3)}, ${reading.ci_high.toFixed(3)}] is red`
+      : ' (no CI — reps<3)') +
+    (baselineData
+      ? ` · baseline ${baselineData.mean_disagreement_sum.toFixed(3)} ± ${baselineData.std_dev.toFixed(3)} is light blue`
+      : ' · no baseline') +
+    ' · 2.0 perfect coherence is green mark';
 }
 
 function lockExecute(label) {

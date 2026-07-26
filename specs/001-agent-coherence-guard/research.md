@@ -33,6 +33,8 @@ Baseline-relative gating fixes both problems at once and is also what makes the 
 
 **Below reps=3** there is no variance estimate at all, so the system returns an explicit insufficient-samples state and renders neither verdict (FR-012). This is a first-class outcome, not an error.
 
+**[verified 2026-07-26] this design assumes the subject model actually produces sampling variance — see D10.** That assumption fails for the testnet chat model. It does not fail for Claude-tier models. The mitigation is a model choice, not a statistics change.
+
 ---
 
 ## D3. Structural context isolation
@@ -131,11 +133,19 @@ Submissions missing these are audited before winners are finalized. Treat them a
 
 ## D8. Concurrency to meet the 45-second budget
 
-**Decision**: Run all elicitations for a check concurrently (9 at reps=3), streaming each result to the client as it lands.
+**REVISED 2026-07-26 — the original decision assumed a concurrency level that fails in practice.**
 
-**Rationale**: Serial execution cannot meet SC-002. Concurrency also serves FR-028 directly — partial results become available naturally rather than requiring separate progress plumbing.
+**Original decision**: run all 9 elicitations (reps=3) concurrently.
 
-**[unverified]** provider rate limits (documented around 30 requests/minute, 5 concurrent) may throttle calibration, which issues 27–45 requests. *Mitigation*: bound concurrency with a semaphore and surface a progress indicator; calibration is an explicitly slower operation and is not covered by the 45-second budget, which applies only to gating checks.
+**What was measured**: 5-way concurrency returned `503`; roughly 1 request/second sequential drew `429`. The documented "30 req/min, 5 concurrent" is not what this account experiences in practice — treat it as inapplicable rather than a ceiling to plan against.
+
+**Revised decision**: run elicitations **sequentially**, with exponential backoff on `429`/`503` (observed effective: 2 retries, base delay ~2–3s). Concurrency, if used at all, is 2-way at most and only as a stretch optimization once sequential is proven reliable.
+
+**Measured**: a full sequential reps=3 workload (9 calls, real triangle prompt, temp=1.0) completed in **26.0s**, with one outlier call at 9.0s against a typical 2.0–2.3s. That fits SC-002's 45-second budget with real but not generous margin — a single retry-requiring call could push close to the limit.
+
+**Revised SC-002 language**: the 45-second figure should be re-validated against whichever model is finally selected (D10) — the timing above is from `qwen2.5-omni`; latency on a Claude-tier mainnet model is unmeasured and may differ. Treat 45s as a target to re-confirm, not a proven number, until that run happens.
+
+*Mitigation for calibration* (27–45 elicitations, sequential): unchanged from the original decision — this is explicitly not covered by the 45-second budget, and a progress indicator matters more than speed here.
 
 ---
 
@@ -149,15 +159,56 @@ Integration is the opposite case. FR-004 forbids substituting synthetic data any
 
 ---
 
+## D10. Subject model: testnet's only chat model is unusable; mainnet required
+
+**[verified 2026-07-26]** — supersedes any prior assumption that `qwen2.5-omni` (testnet's sole chat model, per D4) was an adequate subject.
+
+**The finding.** On the actual production prompt shape (persona framing, "account for how X and Y are related" instruction, live-style market data block), `qwen2.5-omni` returned **the exact same answer 32 times in a row**, across every sampling parameter the OpenAI-compatible API exposes:
+
+| Sweep | N | Result |
+|---|---|---|
+| temperature = 1.0 | 6 | flat |
+| temperature = 1.6 | 4 | flat |
+| temperature = 1.0, with numeric market data | 6 | flat |
+| top_p = 0.95 (no temperature) | 4 | flat |
+| top_p = 0.7 (no temperature) | 4 | flat |
+| temperature = 1.2 + top_p = 0.9 | 4 | flat |
+| temperature = 1.0 + presence_penalty = 1.0 | 4 | flat |
+
+Every run: `{"p_XY_both_true": 0.2, "p_X_true_Y_false": 0.3, "p_X_false_Y_true": 0.3, "p_both_false": 0.2}`, byte-identical. Requests were verified non-cached — each carried a unique nonce and timestamp in the prompt text.
+
+**This is not a general temperature failure.** An earlier, more abstract prompt ("two crypto price statements X and Y", no persona, no explicit correlation instruction) *did* produce real variance from the same model at temp=1.0 (`sd = 0.173`, n=3). Something specific to the production prompt's shape — plausibly a strongly memorized response template for correlation-aware financial forecasting — collapses this model onto one answer, and no sampling parameter reopens it.
+
+**Cross-check against a known-good model, to isolate model from methodology.** The identical production prompt, run through the local `claude` CLI (Sonnet) 5 times sequentially:
+
+```
+rep 1: p_X_true_Y_false=0.43  p_X_false_Y_true=0.35   P(X≠Y)=0.78
+rep 2: p_X_true_Y_false=0.40  p_X_false_Y_true=0.35   P(X≠Y)=0.75
+rep 3: p_X_true_Y_false=0.44  p_X_false_Y_true=0.36   P(X≠Y)=0.80
+rep 4: p_X_true_Y_false=0.42  p_X_false_Y_true=0.38   P(X≠Y)=0.80
+rep 5: p_X_true_Y_false=0.45  p_X_false_Y_true=0.32   P(X≠Y)=0.77
+```
+
+`mean = 0.780, sd = 0.0212, std_error(n=5) = 0.0095` — exactly the shape the CI design requires: a stable mean with real, small, non-degenerate sampling spread. This confirms the prompt template and elicitation methodology are sound; the problem is specific to `qwen2.5-omni`.
+
+**Decision**: fund a 0G **mainnet** account (~$20) and select a Claude-tier model from the 22 available there (`claude-opus-4-8` confirmed listed; `claude-sonnet-5` may also be available — re-check `/v1/models` at fund time). Testnet is no longer viable for the subject model, though it remains fine for everything else already proven (auth flow, endpoint shape, prompt parsing, attestation surface — see O1, O2).
+
+**Before spending**: re-run the exact D10 methodology above (32-call sweep) against the selected mainnet model before committing further build time to it. The `claude` CLI result is strong evidence the *class* of model works, not proof the specific 0G-hosted deployment will — a hosted Claude model behind a router is a different serving stack than the local CLI.
+
+**What does NOT need to change**: D1 (baseline-relative gating), D2 (t-distribution CI math), the elicitation methodology in D3, and the prompt template itself. All are validated by the Claude cross-check. Only the subject model changes.
+
+---
+
 ## Open items carried into implementation
 
 | # | Item | Status | Mitigation |
 |---|------|--------|-----------|
 | O1 | Router exposes per-response attestation signature | **[unverified]** | Capture available verifiability metadata; sidecar only if time permits; never imply attestation that is absent |
-| O2 | Provider account funded | **RESOLVED** ✅ | 10.0 0G verified on Galileo testnet (chain 16602) vs a 4-token minimum. Target testnet; no mainnet purchase needed. Ledger-open and provider-acceptance remain unproven until Scenario 4 runs. |
-| O3 | Provider rate limits under calibration load | **[unverified]** | Semaphore-bounded concurrency; calibration exempt from the 45s budget |
+| O2 | Provider account funded, testnet ledger opens and accepts inference | **PARTIALLY RESOLVED** ⚠️ | Auth, endpoint, and prompt parsing all confirmed on testnet (got past 401 to a real completion). **But see O6 — the testnet model itself is unusable**, so this account will not be the one used for the subject model in the final build. |
+| O3 | Provider rate limits under calibration load | **RESOLVED** ⚠️ — worse than expected | 5-way concurrency → `503`; ~1 req/s serial → `429`. Revised to sequential + backoff (D8). Calibration (27–45 calls) will take noticeably longer than originally assumed; no longer treated as "probably fine," must be timed for real once the mainnet model is selected. |
 | O4 | Hosted trading API key | **RESOLVED** ✅ | Key obtained 2026-07-26. Trading API is now the primary quote path (D5), unlocking the $7k track. Store as `UNISWAP_API_KEY` in `.env`. **Carries three hard qualification requirements — `FEEDBACK.md`, the feedback-form submission linking to it, and a README pointing at the integration lines.** |
-| O5 | Whether a deliberate degradation reliably produces a veto (SC-007) | **[unverified]** | Must be validated once before being demonstrated. A prior crude uniform-corruption test moved the metric the *wrong* way (0.28×), so the degradation must be **asymmetric** — different premises to different contexts — which breaks gluing mechanically rather than hopefully. If it does not reproduce, drop the claim rather than weaken the confidence bar. |
+| O5 | Whether a deliberate degradation reliably produces a veto (SC-007) | **[unverified]** | Must be validated once before being demonstrated. A prior crude uniform-corruption test moved the metric the *wrong* way (0.28×), so the degradation must be **asymmetric** — different premises to different contexts — which breaks gluing mechanically rather than hopefully. If it does not reproduce, drop the claim rather than weaken the confidence bar. Re-validate against whichever model D10 selects — the qwen2.5-omni-era result may not transfer. |
+| O6 | Subject model produces genuine sampling variance | **RESOLVED — testnet fails, mainnet required** ❌➡️ | See D10. `qwen2.5-omni` is deterministic on the production prompt across 32 calls and every sampling parameter tried. A Claude-tier model, cross-checked via local CLI, shows the expected variance (`sd=0.021`). Fund mainnet and re-verify against the actual 0G-hosted model before building further on it. |
 
 ---
 
@@ -170,3 +221,4 @@ Carried forward from prior validation in this repository. These are settled inpu
 - **Data leakage suppresses the signal** (0.68× observed) — per-context slicing is mandatory.
 - **Crude uniform corruption does not raise incoherence** (0.28× observed, the opposite of the hoped-for direction). Consistent lies are believed coherently. Only asymmetric corruption is expected to register, and that remains unvalidated (O5).
 - **No evidence links incoherence to realized profit or loss.** FR-031 forbids implying otherwise.
+- **A subject model must be checked for genuine sampling variance before it is trusted, independent of how capable it seems.** `qwen2.5-omni` looked reasonable in the single-call probe (Scenario 4) and only failed under repeated sampling (D10). One successful call proves parsing works; it does not prove the model is usable as a measurement subject.

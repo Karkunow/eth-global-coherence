@@ -16,18 +16,18 @@ These are validation scenarios, not implementation. Module contracts are in [con
 |----------|--------|--------|
 | `GRAPH_API_KEY` | Subgraph studio | Instant, self-serve |
 | `ETH_RPC_URL` | Any RPC provider free tier | Instant |
-| `ZG_API_KEY` | Verifiable-inference provider | ✅ **Funded — testnet, 10.0 0G** |
+| `ZG_API_KEY` | Verifiable-inference provider | ⚠️ **Mainnet required — see below** |
 
-> **Inference account: resolved.** 10.0 0G verified on Galileo **testnet** (chain 16602) against a 4-token minimum (3 ledger + 1 provider). Target `evmrpc-testnet.0g.ai` — **not** mainnet, where the balance is zero. No token purchase is needed. (An earlier revision of research O2 claimed testnet was unusable; that was wrong and has been corrected.)
+> **Inference account: network target revised 2026-07-26 (research D10).** Testnet funding (10.0 0G on Galileo, chain 16602) is real and its auth/endpoint/parsing all work — but testnet has exactly **one** chat model, `qwen2.5-omni`, and it is **deterministic on the production prompt**: 32/32 identical responses across every temperature, `top_p`, and penalty combination tried. A Claude-tier model does not have this problem (cross-checked via local `claude` CLI: real sampling variance, `sd=0.021`). **Target mainnet** — 22 chat models available, `claude-opus-4-8` confirmed listed.
 >
-> What the balance does *not* prove: that the ledger opens, or that a provider accepts the funds. Those are separate on-chain calls, tested in Scenario 4. **Run Scenario 4 early** — it is the last unproven external dependency.
+> **A single successful call does not prove a model is usable.** `qwen2.5-omni` passed exactly this kind of single-call check before the sweep revealed it was frozen. Scenario 4 below now requires the sweep, not just one call.
 
 ```bash
-cp .env.example .env    # then fill in the three values
+cp .env.example .env    # then fill in the three values — mainnet endpoints by default
 pip install -r requirements.txt
 
-# re-confirm the balance before committing to a long run
-curl -s https://evmrpc-testnet.0g.ai -H 'Content-Type: application/json' \
+# re-confirm the mainnet balance before committing to a long run
+curl -s https://evmrpc.0g.ai -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","method":"eth_getBalance","params":["0xYOUR_ADDRESS","latest"],"id":1}'
 ```
 
@@ -115,17 +115,29 @@ python -m cohesion.triangle --pair WETH-USDC --dump-prompts
 
 ---
 
-## Scenario 4 — Single attested elicitation
+## Scenario 4 — Attested elicitation, then the variance sweep (mandatory, not optional)
+
+**Step one — single call, proves connectivity:**
 
 ```bash
-python -m cohesion.inference --probe-one --pair WETH-USDC
+python scripts/probe_0g.py
 ```
 
 **Expect**: a four-value distribution summing to 1.0, plus attestation metadata (model reported, response ID, provider address, verifiability).
 
-**Note what you actually received.** If `signature` is null, the provider reported model identity but did not return a verifiable signature (research O1). That still satisfies FR-008's evidence requirement — but it must be labelled as *reported* rather than *cryptographically verified* in every surface. Do not present one as the other.
+**Note what you actually received.** If no signature comes back, the provider reported model identity but did not return a verifiable signature (research O1). That still satisfies FR-008's evidence requirement — but it must be labelled as *reported* rather than *cryptographically verified* in every surface. Do not present one as the other.
 
-**Validates**: FR-008.
+**Step two — the sweep, proves usability. Do not skip this.**
+
+A single successful call proves the model can produce parseable output. It does **not** prove the model is usable as a measurement subject — `qwen2.5-omni` passed step one and then returned 32 identical answers in a row under repeated sampling (research D10). Only repeated sampling reveals whether a model actually varies.
+
+```bash
+python scripts/probe_0g.py --sweep --n 8
+```
+
+**Expect**: `sd > 0` on the printed `P(X!=Y)` values, with a verdict line reading `✓ REAL VARIANCE`. If it instead reads `✗ ZERO VARIANCE`, **stop** — do not proceed to calibration with this model. Try a different `ZG_MODEL` and re-run the sweep before building anything further on it.
+
+**Validates**: FR-008, and — critically — the precondition FR-011/FR-012 depend on (that `std_error` is a real, non-degenerate number).
 
 ---
 
@@ -166,7 +178,7 @@ cat baselines.json     # one entry, keyed by config hash
 5. Verdict, stamped with **confidence and reps** (FR-022).
 6. Execute unlocks **only** on PASS (FR-025).
 
-**Time it.** Under 45 seconds at reps=3, or SC-002 fails — check that elicitations run concurrently rather than serially (research D8).
+**Time it.** Target 45 seconds at reps=3 (SC-002) — but D8 revised the execution model to **sequential with backoff**, not concurrent, after concurrency triggered `503`s at 5-way parallelism. Measured on testnet's model: 26.0s for 9 sequential calls, with one outlier at 9.0s against a typical ~2s. Re-measure against the actual mainnet model selected in Scenario 4 — timing on a different model/provider is unverified and may not match.
 
 **Three negative paths, all mandatory:**
 

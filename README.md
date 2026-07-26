@@ -28,7 +28,7 @@ flowchart TB
     MCPS --> ORCH
 
     TRI["triangle.py<br/>probe construction,<br/>leak-safe per-context prompts"]
-    CORE["core.py<br/>incoherence LP,<br/>t-distribution confidence interval"]
+    CORE["core.py<br/>Incoherence Calculation,<br/>t-distribution confidence interval"]
     BASE["baseline.py<br/>baselines.json<br/>drift verdict (Welch's t-test)"]
     ORCH --> TRI
     ORCH --> CORE
@@ -42,7 +42,7 @@ flowchart TB
     ORCH -->|sequential, backoff| ZG
     ORCH -->|quote + build tx| UNI
 
-    MM(["User's own MetaMask<br/>signs + sends, client-side only<br/>this server never holds a key"])
+    MM(["User's own MetaMask<br/>signs + sends, client-side only"])
     UNI -.->|unsigned tx, opt-in| MM
 
     VERDICT{{"PASS / VETO / NO_BASELINE"}}
@@ -295,7 +295,7 @@ The three context tables form a **presheaf**; coherence is precisely the questio
 
 ```
 cohesion/
-  core.py          # incoherence LP + t-distribution CI + reading assembly    (pure, unit-tested)
+  core.py          # incoherence calculation + t-distribution CI + reading assembly    (pure, unit-tested)
   triangle.py       # probe construction, propositions, leak-safe prompts     (pure, unit-tested)
   baseline.py        # key derivation, atomic storage, drift-verdict decision  (unit-tested)
   graph_client.py     # live Uniswap v3 pool data                              <- The Graph

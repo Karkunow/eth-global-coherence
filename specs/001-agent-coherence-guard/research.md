@@ -218,6 +218,39 @@ rep 2: P(X≠Y)=0.45
 
 ---
 
+## D11. Attempted degradation demo: two honest attempts, two negative results
+
+**[Attempted 2026-07-26, post-launch.]** Tried to reproduce a live `VETO` against `deepseek-v4-flash`'s
+real calibrated baseline (`mean_disagreement_sum=1.484, std_dev=0.079, n=12`), per O5's mandate to validate
+this once before ever claiming it in a demo.
+
+**Attempt 1 — uniform mood/persona randomization.** System prompt instructed the model to silently adopt a
+random emotional mood (panicked/euphoric/bored/paranoid) per question, with no memory of other questions.
+Result: mean essentially unchanged (`1.483` vs baseline `1.484`), but `std_error` widened ~8x (`0.165` vs
+typical `~0.02`). This *increases* noise without shifting the mean, which makes a significant result
+*harder* to reach, not easier — a genuinely useful negative result, not just "didn't work."
+
+**Attempt 2 — asymmetric fabricated narratives, the theoretically-motivated lever.** Each of the three
+isolated contexts was given a different, mutually-inconsistent fabricated "recent move" framing (context AB
+told WETH/USDC "just crashed -8% on panic selling"; context BC told USDC/WBTC "just spiked +12% on a short
+squeeze, expected to reverse"; context AC given no special framing) — this is exactly the "different
+premises to different contexts" mechanism O5 predicted was necessary. Run at reps=3: `PASS`, `p=0.249`,
+trials `[1.68, 1.42, 1.54]` straddling the baseline rather than consistently below it. Re-run at reps=6 for
+more statistical power (same intervention): `PASS`, `p=0.356` — *weaker*, not stronger, with a trial mean
+(`1.535`) landing slightly *closer* to perfect coherence than the baseline, not further from it.
+
+**Conclusion: does not reproduce, dropped per the project's own stated rule** ("if it does not reproduce,
+drop the claim rather than weaken the confidence bar" — see O5 and the README's Honest Assessment section).
+Two independent, real, live interventions against the actual shipped model — not a simulation — both failed
+to produce a significant drift signal, one of them the specific mechanism theory predicted should work. This
+does not mean the drift test itself is broken (the decision rule is unit-tested at all 5 boundaries,
+including a synthetic VETO case, in `tests/unit/test_baseline.py`) — it means `deepseek-v4-flash` on this
+particular prompt is more robust to these two specific interventions than expected, or a stronger/different
+intervention is needed. No degraded-input demo mode is implemented in the shipped app as a result — this was
+a standalone experiment (see the pattern in `experiments/`), never wired into `cohesion/`.
+
+---
+
 ## Open items carried into implementation
 
 | # | Item | Status | Mitigation |
@@ -226,7 +259,7 @@ rep 2: P(X≠Y)=0.45
 | O2 | Provider account funded, testnet ledger opens and accepts inference | **PARTIALLY RESOLVED** ⚠️ | Auth, endpoint, and prompt parsing all confirmed on testnet (got past 401 to a real completion). **But see O6 — the testnet model itself is unusable**, so this account will not be the one used for the subject model in the final build. |
 | O3 | Provider rate limits under calibration load | **RESOLVED** ⚠️ — worse than expected | 5-way concurrency → `503`; ~1 req/s serial → `429`. Revised to sequential + backoff (D8). Calibration (27–45 calls) will take noticeably longer than originally assumed; no longer treated as "probably fine," must be timed for real once the mainnet model is selected. |
 | O4 | Hosted trading API key | **RESOLVED** ✅ | Key obtained 2026-07-26. Trading API is now the primary quote path (D5), unlocking the $7k track. Store as `UNISWAP_API_KEY` in `.env`. **Carries three hard qualification requirements — `FEEDBACK.md`, the feedback-form submission linking to it, and a README pointing at the integration lines.** |
-| O5 | Whether a deliberate degradation reliably produces a veto (SC-007) | **[unverified]** | Must be validated once before being demonstrated. A prior crude uniform-corruption test moved the metric the *wrong* way (0.28×), so the degradation must be **asymmetric** — different premises to different contexts — which breaks gluing mechanically rather than hopefully. If it does not reproduce, drop the claim rather than weaken the confidence bar. Re-validate against whichever model D10 selects — the qwen2.5-omni-era result may not transfer. |
+| O5 | Whether a deliberate degradation reliably produces a veto (SC-007) | **RESOLVED — does not reproduce, claim dropped** ❌ | See D11. Two real live attempts against `deepseek-v4-flash`'s actual baseline (uniform mood randomization; asymmetric per-context fabricated narratives, the theoretically-motivated mechanism) both returned `PASS`, one at reps=3 and again at reps=6 for more power. Per the project's own rule, the claim is dropped rather than the confidence bar weakened. No degraded-input mode ships in `cohesion/`. |
 | O6 | Subject model produces genuine sampling variance | **RESOLVED ✅** | See D10. `qwen2.5-omni` (testnet) and `glm-5.2` (mainnet, runaway reasoning) both ruled out; the Claude/gpt-5.6-luna provider on mainnet is broken infrastructure-side. `deepseek-v4-flash` confirmed working: `enable_thinking=false` honored, real variance (`sd=0.05`, n=3), 6.4s total. This is now `ZG_MODEL`. |
 
 ---

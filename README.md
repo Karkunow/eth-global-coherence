@@ -4,6 +4,65 @@
 
 > Advises whether an AI agent's reasoning has drifted from its own normal — before it moves your money.
 
+**Team:** Iaroslav Karkunov — Telegram [@wknvw](https://t.me/wknvw) · X [@apocnab](https://x.com/apocnab)
+
+---
+
+## Architecture
+
+One engine (`cohesion/orchestrator.py`), two entry points, three load-bearing sponsor integrations:
+
+```mermaid
+flowchart TB
+    UI["Browser Dashboard<br/>web/index.html"]
+    MCPC["MCP Client<br/>e.g. Claude Code"]
+
+    SRV["FastAPI server<br/>cohesion/server.py<br/>(SSE)"]
+    MCPS["MCP server<br/>cohesion/mcp_server.py<br/>coherence_check / _calibrate / _baselines"]
+
+    UI --> SRV
+    MCPC --> MCPS
+
+    ORCH["orchestrator.py<br/>run_check() / run_calibration()<br/>the ONLY module that knows the full sequence"]
+    SRV --> ORCH
+    MCPS --> ORCH
+
+    TRI["triangle.py<br/>probe construction,<br/>leak-safe per-context prompts"]
+    CORE["core.py<br/>incoherence LP,<br/>t-distribution confidence interval"]
+    BASE["baseline.py<br/>baselines.json<br/>drift verdict (Welch's t-test)"]
+    ORCH --> TRI
+    ORCH --> CORE
+    ORCH --> BASE
+
+    GRAPH[["The Graph<br/>Uniswap v3 subgraph<br/>live pool prices, TVL"]]
+    ZG[["0G Compute Router<br/>3 isolated belief elicitations<br/>+ attestation metadata"]]
+    UNI[["Uniswap Trading API<br/>quote + swap calldata<br/>QuoterV2 fallback"]]
+
+    TRI -->|live prices, per-leg| GRAPH
+    ORCH -->|sequential, backoff| ZG
+    ORCH -->|quote + build tx| UNI
+
+    MM(["User's own MetaMask<br/>signs + sends, client-side only<br/>this server never holds a key"])
+    UNI -.->|unsigned tx, opt-in| MM
+
+    VERDICT{{"PASS / VETO / NO_BASELINE"}}
+    CORE --> VERDICT
+    BASE --> VERDICT
+    VERDICT --> EXEC["Execute — advisory gate only<br/>(never blocks, never auto-signs)"]
+
+    classDef thegraph fill:#6f4cff,color:#fff,stroke:#333,stroke-width:1px;
+    classDef uniswap fill:#ff007a,color:#fff,stroke:#333,stroke-width:1px;
+    classDef zg fill:#00d1b2,color:#000,stroke:#333,stroke-width:1px;
+    class GRAPH thegraph
+    class UNI,MM uniswap
+    class ZG zg
+```
+
+**The Graph** (purple) supplies every live price the probe triangle is built from — never mocked. **Uniswap**
+(pink) turns the check into a real, quotable, optionally-signable trade. **0G Compute** (teal) runs every
+belief elicitation the whole measurement depends on. Detail on each integration, with file/line pointers, is
+in [How It's Made](#how-its-made) below.
+
 ---
 
 ## The Problem

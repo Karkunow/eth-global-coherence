@@ -442,14 +442,8 @@ async function runCheck(endpoint) {
         const amtOut = toHuman(data.amount_out, data.token_out);
         quoteBox.textContent = `Quote (${data.source}): ${amtIn} ${data.token_in} → ${amtOut} ${data.token_out}  (fee ${data.fee_tier}, gas ~${data.gas_estimate})`;
         if (data.source === 'trading_api') {
-          const showTxBtn = document.getElementById('show-tx-btn');
-          showTxBtn.style.display = 'inline-block';
-          showTxBtn.dataset.pair = document.getElementById('check-pair').value;
-          showTxBtn.dataset.amount = document.getElementById('check-amount').value;
-          const walletRow = document.getElementById('wallet-row');
-          walletRow.style.display = 'block';
-          walletRow.dataset.pair = document.getElementById('check-pair').value;
-          walletRow.dataset.amount = document.getElementById('check-amount').value;
+          document.getElementById('show-tx-btn').style.display = 'inline-block';
+          document.getElementById('wallet-row').style.display = 'block';
         }
       } else if (event === 'probe') {
         probeBox.textContent = `Probe: ${data.pair.join('/')} → ${data.third} — product ${data.product.toFixed(4)} (${data.valid ? 'valid' : 'INVALID'})`;
@@ -528,7 +522,10 @@ document.getElementById('show-tx-btn').addEventListener('click', async (ev) => {
   box.style.display = 'block';
   box.textContent = 'Building unsigned transaction…';
   try {
-    const params = new URLSearchParams({ pair: btn.dataset.pair, amount: btn.dataset.amount });
+    const params = new URLSearchParams({
+      pair: document.getElementById('check-pair').value,
+      amount: document.getElementById('check-amount').value,
+    });
     const res = await fetch('/api/swap-tx?' + params.toString());
     const tx = await res.json();
     if (!res.ok) {
@@ -608,7 +605,6 @@ document.getElementById('connect-wallet-btn').addEventListener('click', async ()
 document.getElementById('wallet-sign-btn').addEventListener('click', async () => {
   const status = document.getElementById('wallet-status');
   const sendBtn = document.getElementById('wallet-send-btn');
-  const row = document.getElementById('wallet-row');
   const btn = document.getElementById('wallet-sign-btn');
   if (!connectedWallet) { status.textContent = 'Connect a wallet first.'; return; }
   btn.disabled = true;
@@ -621,7 +617,9 @@ document.getElementById('wallet-sign-btn').addEventListener('click', async () =>
 
     status.textContent = 'Fetching quote for your wallet…';
     const qParams = new URLSearchParams({
-      pair: row.dataset.pair, amount: row.dataset.amount, swapper: connectedWallet, chain_id: chainId,
+      pair: document.getElementById('check-pair').value,
+      amount: document.getElementById('check-amount').value,
+      swapper: connectedWallet, chain_id: chainId,
     });
     const qRes = await fetch('/api/swap-quote?' + qParams.toString());
     const quoteData = await qRes.json();

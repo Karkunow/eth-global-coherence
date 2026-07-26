@@ -128,3 +128,33 @@ def build_all_context_slices(probe: Probe) -> dict:
     the same (letter, letter) tuples as core.CONTEXTS."""
     props = propositions(probe.pair, probe.third)
     return {ctx: build_context_slice(ctx, probe, props) for ctx in CONTEXTS}
+
+
+def _main():
+    """quickstart.md Scenario 3: dumps all three per-context prompts for
+    manual leak-discipline inspection -- not automatable (FR-006)."""
+    import argparse
+
+    from cohesion.config import load_config
+    from cohesion.graph_client import fetch_candidate_tvl, fetch_triangle_legs, now_iso
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--pair", required=True)
+    parser.add_argument("--dump-prompts", action="store_true")
+    args = parser.parse_args()
+    pair = tuple(args.pair.split("-"))
+
+    cfg = load_config()
+    candidates = {c: fetch_candidate_tvl(cfg, pair[1], c) for c in LIQUID_THIRD_ASSETS}
+    third = pick_third_asset(candidates)
+    legs = fetch_triangle_legs(cfg, pair, third)
+    probe = build_probe(pair, third, legs, now_iso())
+
+    for ctx, cs in build_all_context_slices(probe).items():
+        print(f"{'=' * 68}\ncontext {ctx}\n{'=' * 68}")
+        print(build_prompt(cs))
+        print()
+
+
+if __name__ == "__main__":
+    _main()

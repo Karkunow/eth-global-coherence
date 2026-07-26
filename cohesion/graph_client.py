@@ -78,15 +78,21 @@ def fetch_leg(cfg: Config, symbol_x: str, symbol_y: str) -> Leg:
     subgraph happens to store as pool.token0."""
     pool = _fetch_pool_raw(cfg, symbol_x, symbol_y)
     pool_token0_symbol = pool["token0"]["symbol"]
+    # Empirically verified against Uniswap's own Trading API quote
+    # (2026-07-26): for a WETH(token0)/USDC(token1) pool, token0Price is
+    # ~0.0005 (token0-per-token1, i.e. WETH-per-USDC) and token1Price is
+    # ~1878 (token1-per-token0, i.e. USDC-per-WETH) -- the reverse of an
+    # earlier assumption here that briefly shipped and was caught by
+    # cross-checking the CLI output's displayed price against a known-good
+    # live quote. token1Price is therefore token1-per-token0.
     if pool_token0_symbol == symbol_x:
-        # pool.token0 == X, pool.token1 == Y -> token0Price is "token1 per
-        # token0" == Y-per-X, exactly what we want.
-        price = float(pool["token0Price"])
-    else:
-        # pool.token0 == Y, pool.token1 == X -> token1Price is "token0 per
-        # token1"... the subgraph's token1Price is the reciprocal of
-        # token0Price (X-per-Y), so invert it to get Y-per-X.
+        # pool.token0 == X, pool.token1 == Y -> token1Price is
+        # token1-per-token0 == Y-per-X, exactly what we want.
         price = float(pool["token1Price"])
+    else:
+        # pool.token0 == Y, pool.token1 == X -> token0Price is
+        # token0-per-token1 == Y-per-X.
+        price = float(pool["token0Price"])
     return Leg(
         pool_address=pool["id"],
         token0=symbol_x,
@@ -123,3 +129,38 @@ def fetch_triangle_legs(cfg: Config, pair: tuple, third: str) -> tuple:
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _main():
+    """quickstart.md Scenario 1: prints the three live legs of a triangle
+    and the product sanity check. Exits non-zero with no printed prices on
+    failure (FR-004) -- see the Scenario 1 failure-path check."""
+    import argparse
+    import sys
+
+    from cohesion.config import load_config
+    from cohesion.triangle import LIQUID_THIRD_ASSETS, pick_third_asset
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--pair", required=True, help="e.g. WETH-USDC")
+    args = parser.parse_args()
+    pair = tuple(args.pair.split("-"))
+
+    try:
+        cfg = load_config()
+        candidates = {c: fetch_candidate_tvl(cfg, pair[1], c) for c in LIQUID_THIRD_ASSETS}
+        third = pick_third_asset(candidates)
+        legs = fetch_triangle_legs(cfg, pair, third)
+    except (DataUnavailable, RuntimeError) as e:
+        print(f"DATA_UNAVAILABLE: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    product = legs[0].price * legs[1].price * legs[2].price
+    for leg in legs:
+        print(f"{leg.token0}/{leg.token1}  {leg.price:<12.6g} fee {leg.fee_tier:<6} TVL ${leg.tvl_usd/1e6:,.1f}M")
+    within = abs(product - 1.0) <= 0.01
+    print(f"product = {product:.4f}  {'✓ within 1% tolerance' if within else '✗ OUTSIDE tolerance'}")
+
+
+if __name__ == "__main__":
+    _main()

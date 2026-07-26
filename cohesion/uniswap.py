@@ -137,3 +137,25 @@ def get_quote(cfg: Config, token_in: str, token_out: str, amount_in: float, fall
             raise QuoteUnavailable(
                 f"both quote paths failed -- trading_api: {trading_api_error}; quoter_v2: {fallback_error}"
             ) from fallback_error
+
+
+def _main():
+    """quickstart.md Scenario 2: prints a real executable quote."""
+    import argparse
+
+    from cohesion.config import load_config
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--pair", required=True, help="e.g. WETH-USDC")
+    parser.add_argument("--amount", type=float, required=True)
+    args = parser.parse_args()
+    x, y = args.pair.split("-")
+
+    cfg = load_config()
+    q = get_quote(cfg, x, y, args.amount)
+    print(f"{args.amount} {x} -> {q.amount_out} {y} (raw units)")
+    print(f"fee_tier={q.fee_tier}  gas_estimate={q.gas_estimate}  pool={q.pool_address}  source={q.source}")
+
+
+if __name__ == "__main__":
+    _main()

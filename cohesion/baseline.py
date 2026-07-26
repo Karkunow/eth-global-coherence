@@ -11,6 +11,9 @@ import os
 import tempfile
 from dataclasses import asdict, dataclass
 
+import numpy as np
+from scipy import stats as scipy_stats
+
 BASELINES_PATH = "baselines.json"
 
 
@@ -90,3 +93,74 @@ def store_baseline(baseline: Baseline, path: str = BASELINES_PATH) -> None:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
         raise
+
+
+@dataclass(frozen=True)
+class Verdict:
+    outcome: str  # "PASS" | "VETO" | "NO_BASELINE" | "INSUFFICIENT_SAMPLES"
+    reading: dict
+    baseline: dict | None
+    p_value: float | None
+    confidence: float
+    note: str | None
+    requires_acknowledgement: bool
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def compute_verdict(baseline_obj, reading, trials: list, confidence: float = 0.95) -> Verdict:
+    """The decision rule (FR-019 through FR-023):
+
+        if no baseline for config_key      -> NO_BASELINE          (ack required)
+        elif reps < 3                      -> INSUFFICIENT_SAMPLES (ack required)
+        elif reading significantly WORSE   -> VETO                 (ack required)
+        elif reading significantly BETTER  -> PASS + note          (proceed freely)
+        else                                -> PASS                 (proceed freely)
+
+    "Significantly" is a one-sided Welch's t-test at `confidence`, always
+    against the stored baseline -- never a fixed threshold (FR-019).
+    `trials` is core.disagreement_sum_trials() for the current reading:
+    genuine per-trial samples of the disagreement_sum statistic, compared
+    against the baseline's own (mean, std_dev, n) via
+    scipy.stats.ttest_ind_from_stats (the summary-statistics form of
+    Welch's test, since the baseline stores only summary stats, not raw
+    trials -- see data-model.md's Baseline entity).
+
+    "Worse" means further from 2.000, i.e. a LOWER disagreement_sum than
+    baseline; "better" means a HIGHER one. Reading.reps as the sample-size
+    check mirrors core.confidence_interval()'s own reps>=3 floor (FR-012).
+    """
+    reading_dict = {
+        "incoherence": reading.incoherence, "disagreement_sum": reading.disagreement_sum,
+        "std_error": reading.std_error, "ci_low": reading.ci_low, "ci_high": reading.ci_high,
+        "reps": reading.reps, "signalling": reading.signalling,
+        "samples_used": reading.samples_used, "samples_discarded": reading.samples_discarded,
+    }
+
+    if baseline_obj is None:
+        return Verdict("NO_BASELINE", reading_dict, None, None, confidence, None, True)
+
+    if reading.reps < 3 or len(trials) < 2:
+        return Verdict("INSUFFICIENT_SAMPLES", reading_dict, baseline_obj.to_dict(), None,
+                        confidence, None, True)
+
+    current_mean = float(np.mean(trials))
+    current_std = float(np.std(trials, ddof=1))
+    current_n = len(trials)
+
+    alternative = "less" if current_mean < baseline_obj.mean_disagreement_sum else "greater"
+    _t_stat, p_value = scipy_stats.ttest_ind_from_stats(
+        mean1=current_mean, std1=current_std, nobs1=current_n,
+        mean2=baseline_obj.mean_disagreement_sum, std2=baseline_obj.std_dev, nobs2=baseline_obj.n,
+        equal_var=False, alternative=alternative,
+    )
+    p_value = float(p_value)
+    significant = p_value < (1 - confidence)
+
+    if alternative == "less" and significant:
+        return Verdict("VETO", reading_dict, baseline_obj.to_dict(), p_value, confidence, None, True)
+    if alternative == "greater" and significant:
+        note = "Reading is significantly better than baseline -- this also indicates the configuration has changed."
+        return Verdict("PASS", reading_dict, baseline_obj.to_dict(), p_value, confidence, note, False)
+    return Verdict("PASS", reading_dict, baseline_obj.to_dict(), p_value, confidence, None, False)

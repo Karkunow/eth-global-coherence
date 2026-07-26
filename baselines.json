@@ -15,18 +15,18 @@
     "third": "WBTC"
   },
   "6fac6b93229e2b1e4b99efb6bd827363e2cecb1ee4cf031017e277b66269bff1": {
-    "calibrated_at": "2026-07-26T05:06:18Z",
+    "calibrated_at": "2026-07-26T06:13:10Z",
     "key": "6fac6b93229e2b1e4b99efb6bd827363e2cecb1ee4cf031017e277b66269bff1",
-    "mean_disagreement_sum": 1.5372222222222223,
-    "mean_incoherence": 0.23916666666666675,
+    "mean_disagreement_sum": 1.5799999999999998,
+    "mean_incoherence": 0.22351666666666659,
     "model": "0gm-1.0-35b-a3b",
-    "n": 9,
+    "n": 12,
     "pair": [
       "WETH",
       "USDC"
     ],
     "prompt_id": "default",
-    "std_dev": 0.19822826348541842,
+    "std_dev": 0.12540842366951566,
     "third": "WBTC"
   },
   "94e6156de15e0529b51ad04654b6c13e68e7e60ae7f9fb99b936669151521a8d": {
@@ -57,6 +57,36 @@
     ],
     "prompt_id": "default",
     "std_dev": 0.1330413469565007,
+    "third": "WBTC"
+  },
+  "bd22bee77cd602bf88a528bbae7fb6df0ec56d0a2444c1c3c69b2df33d59e6dc": {
+    "calibrated_at": "2026-07-26T06:14:15Z",
+    "key": "bd22bee77cd602bf88a528bbae7fb6df0ec56d0a2444c1c3c69b2df33d59e6dc",
+    "mean_disagreement_sum": 1.5334583333333336,
+    "mean_incoherence": 0.24035416666666665,
+    "model": "0gm-1.0-35b-a3b-sia",
+    "n": 12,
+    "pair": [
+      "WETH",
+      "USDC"
+    ],
+    "prompt_id": "default",
+    "std_dev": 0.22509669218656533,
+    "third": "WBTC"
+  },
+  "e3b143844e547b802a97adc2a74a4675421bdb46293f6b1948dc7013830457a5": {
+    "calibrated_at": "2026-07-26T06:00:27Z",
+    "key": "e3b143844e547b802a97adc2a74a4675421bdb46293f6b1948dc7013830457a5",
+    "mean_disagreement_sum": 1.2525000000000002,
+    "mean_incoherence": 0.4058333333333334,
+    "model": "hy3",
+    "n": 12,
+    "pair": [
+      "WETH",
+      "USDC"
+    ],
+    "prompt_id": "default",
+    "std_dev": 0.11631657428993283,
     "third": "WBTC"
   }
 }

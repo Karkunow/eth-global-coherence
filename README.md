@@ -2,20 +2,20 @@
 
 **ETHGlobal Lisbon 2026** — AI agents + verifiable inference + DeFi
 
-> Health check proving an AI agent's beliefs are self-contradictory — before it moves your money.
+> Advises whether an AI agent's reasoning has drifted from its own normal — before it moves your money.
 
 ---
 
 ## The Problem
 
 Autonomous agents are starting to move real money. Before one does, you want to know something basic:
-**are its beliefs even self-consistent?**
+**are its beliefs even self-consistent, and has that changed since it was last known good?**
 
 Hardware attestation — like 0G's TEE-sealed inference — proves *who spoke*: that this exact model produced
-this exact output, unaltered. It says nothing about whether what was said hangs together. An agent can be
-perfectly honest, running unmodified, and still hold beliefs that describe a world which cannot exist.
-
-**Cohesion measures that gap.**
+this exact output, unaltered. It says nothing about whether what was said hangs together, or whether it's
+gotten worse. An agent can be perfectly honest, running unmodified, and still hold beliefs that describe a
+world which cannot exist — and every model does, to some degree. **Cohesion measures that gap, and gates on
+drift from an agent's own calibrated baseline, not against an impossible ideal of zero incoherence.**
 
 ---
 
@@ -23,8 +23,8 @@ perfectly honest, running unmodified, and still hold beliefs that describe a wor
 
 ### 1. Build a probe triangle around a real trade
 
-When an agent is about to execute a swap, Cohesion auto-selects a third asset to close the cycle. For a
-WETH→USDC swap it picks WBTC, giving the loop **WETH/USDC → USDC/WBTC → WBTC/WETH**.
+When a user sets up a swap, Cohesion auto-selects a third asset (by TVL, from a fixed liquid set) to close
+the cycle. For a WETH→USDC swap it might pick WBTC, giving the loop **WETH/USDC → USDC/WBTC → WBTC/WETH**.
 
 The triangle is **not the trade** — it's instrumentation built around it. A closed cycle is the smallest
 structure where belief consistency is enforceable by arithmetic rather than opinion.
@@ -53,56 +53,50 @@ are impossible — and every surviving world has **exactly two disagreeing pairs
 | 7 | ↓ | ↓ | ↑ | · | ✓ | ✓ | **2** | ✅ |
 | 8 | ↓ | ↓ | ↓ | · | · | · | **0** | ❌ product would fall below 1 |
 
-With three binary values that aren't all equal, exactly two share a value and one differs — so the pairs
-always split into one agreeing and two disagreeing. Never 1, never 3.
-
-Since the count is the constant 2 in every possible world, its expectation is 2 regardless of how uncertain
-the forecaster is:
+Since the disagreement count is the constant 2 in every possible world, its expectation is 2 regardless of
+how uncertain the forecaster is:
 
 > **E[disagreements] = P(A≠B) + P(B≠C) + P(A≠C) = 2.000**
 
-An agent landing at 1.84 isn't pessimistic or badly calibrated. It is assigning positive probability to
-rows 1 and 8 — worlds that cannot occur.
+An agent landing below 2.000 isn't pessimistic or badly calibrated — it is assigning positive probability
+to rows 1 and 8, worlds that cannot occur. In practice, real models never hit exactly 2.000; every model
+carries some baseline incoherence (we measured 25–27% for our subject model, `deepseek-v4-flash`, on this
+prompt — see [baselines.json](./baselines.json)). That's why gating happens against the agent's **own**
+calibrated normal, not against the theoretical ideal.
 
 ### 3. Ask in isolation
 
-Cohesion elicits the three pairwise forecasts in **three separate, isolated conversations**. The agent never
-sees what it said elsewhere — exactly how multi-agent pipelines actually fragment reasoning. Each context is
-shown only the two ratios relevant to it, so no single conversation contains enough information to notice
-the constraint.
+Cohesion elicits the three pairwise forecasts in **three separate, isolated inference calls** — a fresh
+0G Compute request per context, never a shared conversation. Each context is shown only the two ratios
+relevant to it ([cohesion/triangle.py](./cohesion/triangle.py)'s `build_context_slice`), so no single call
+contains enough information to infer the third leg or the closed-cycle constraint.
 
 ### 4. Measure the incoherence
 
-A linear program asks whether those three answers can be marginals of *any* single joint distribution over
-the six possible worlds. It maximizes the belief mass that can be assigned consistently; whatever cannot be
-placed anywhere is the **incoherence %** — the share of the agent's belief that lives in no possible world.
+A linear program ([cohesion/core.py](./cohesion/core.py)'s `incoherence_lp`) asks whether those three
+pairwise answers can be marginals of *any* single joint distribution over the six possible worlds. It
+maximizes the belief mass that can be assigned consistently; whatever cannot be placed anywhere is the
+**incoherence %** — the share of the agent's belief that lives in no possible world.
 
-Not "this looks risky." A number, derived from the agent's own stated probabilities.
+### 5. Compare to the agent's own baseline, then advise
 
-### 5. Gate the trade
-
-The verdict gates execution. Incoherent → the swap is blocked before capital moves.
-
----
-
-## Use Cases
-
-1. **Pre-execution hook** — block the trade before it fires if the agent's beliefs contradict.
-2. **Coherence certificate** — vaults and DAOs require a signed, fresh proof before accepting agent txs.
-3. **Fleet monitoring** — alert when a deployed agent's incoherence drifts after a model or feed change.
-4. **Silent-degradation canary** — detect when a hosted model quietly gets worse, with no ground truth needed.
-
-**Cadence:** per-trade for whales, per-hour for fleets, always on change (model swap, prompt update, new
-data feed, regime shift).
+A one-sided Welch's t-test ([cohesion/baseline.py](./cohesion/baseline.py)'s `compute_verdict`) compares
+the live reading against a stored, previously-calibrated baseline for that exact model/prompt/pair. **The
+system advises, it never blocks**: on `PASS`, the trade proceeds with no friction; on `VETO` (significantly
+worse than baseline) or `NO_BASELINE`, the UI requires an explicit, deliberate acknowledgement before the
+Execute action unlocks — but it always unlocks eventually, because coherence is a necessary, not sufficient,
+condition for sound reasoning. Blocking would assert more than the measurement supports.
 
 ---
 
 ## How It's Made
 
-**Stack:** Python throughout — FastAPI with Server-Sent Events for the streaming dashboard,
-`scipy.optimize.linprog` for the coherence LP, `scipy.stats.t` for confidence intervals, `web3.py` for
-contract calls, and a stdio MCP server exposing the same engine as a callable tool. Frontend is plain
-HTML/CSS/JS with no build step, consuming the SSE stream directly.
+**Stack:** Python throughout — FastAPI with Server-Sent Events for the streaming dashboard
+([cohesion/server.py](./cohesion/server.py)), `scipy.optimize.linprog` for the coherence LP,
+`scipy.stats.t`/`ttest_ind_from_stats` for confidence intervals and the drift test, `httpx` for The Graph
+and the Trading API, `web3.py` for the QuoterV2 fallback, and a stdio MCP server
+([cohesion/mcp_server.py](./cohesion/mcp_server.py)) exposing the identical engine as three callable tools.
+Frontend is plain HTML/CSS/JS with no build step, consuming the SSE stream directly.
 
 ### The core: a linear program over possible worlds
 
@@ -113,61 +107,77 @@ constraints; if the optimum falls below 1.0, the shortfall *is* the incoherence 
 
 ### Statistical honesty
 
-Verdicts are gated on a **95% t-interval excluding 2.000** — `t_{0.975, df} × SE`, not a flat 2×SE. With
-only 3 reps per context, a flat threshold would overclaim confidence (the critical value is 4.30 at reps=3
-versus 2.31 at reps=9). Below 3 reps no variance estimate exists, so the system refuses to issue a veto at
-all. "No significant violation at this confidence" is a valid, honestly-reported outcome — we never force a
-verdict.
+Confidence intervals use a real **t-distribution critical value** (`t_{0.975, df}`), not a flat 2×SE —
+at reps=3 the critical value is 4.30, not ≈2.0, which matters a lot at small sample sizes
+([cohesion/core.py](./cohesion/core.py)'s `confidence_interval`, unit-tested in
+[tests/unit/test_core.py](./tests/unit/test_core.py)). Below 3 reps per context, no variance estimate
+exists at all, so the system reports `INSUFFICIENT_SAMPLES` and renders no verdict rather than force one.
+The drift test itself uses `scipy.stats.ttest_ind_from_stats` — the summary-statistics form of Welch's
+t-test — since the stored baseline keeps only (mean, std_dev, n), not raw samples.
 
 ### Partner integrations — all load-bearing
 
-**The Graph** supplies the live data the entire constraint depends on. We query the Uniswap v3 subgraph via
-the decentralized gateway for `token0Price`/`token1Price`, `feeTier`, `liquidity`, `totalValueLockedUSD`,
-and `poolDayDatas` across the three probe pools. Without live pool prices there are no propositions to
-elicit beliefs about. TVL also drives auto-selection of the triangle's third leg. A guard rejects the run if
-the three ratios don't multiply to within 1% of 1.0 — that check certifies the triangle is currently
-arbitrage-tight, which is what makes the constraint valid on independently-priced AMM pools rather than
-clean cross-rates.
+**The Graph** ([cohesion/graph_client.py](./cohesion/graph_client.py)) supplies the live data the entire
+constraint depends on: querying the Uniswap v3 subgraph via the decentralized gateway for `token0Price`,
+`token1Price`, `feeTier`, `liquidity`, and `totalValueLockedUSD` across the three probe pools, trying both
+token orderings since the subgraph's `token0`/`token1` address-sort order is arbitrary and doesn't match
+our semantic direction. TVL also drives auto-selection of the triangle's third leg
+(`pick_third_asset`, [cohesion/triangle.py](./cohesion/triangle.py)). A guard rejects the run if the three
+legs don't multiply to within 1% of 1.0 — that check certifies the triangle is currently arbitrage-tight,
+which is what makes the constraint valid on independently-priced AMM pools rather than clean cross-rates.
 
-**Uniswap** turns an abstract check into a gated trade. Each leg is quoted through QuoterV2 via
-`staticCall` — mandatory, since the Quoter is non-view by design and reverts to return its data, the single
-most common integration mistake. The quote makes the veto concrete: a real, executable route with real
-amounts and fees, blocked at the Execute button.
+**Uniswap** ([cohesion/uniswap.py](./cohesion/uniswap.py)) turns the check into a gated, real trade. The
+Trading API (`POST /v1/quote`, `x-api-key` auth) is the primary path — required for the $7k API Integration
+track's qualification bar of "a valid API key from the Uniswap Developer Platform" — with QuoterV2's
+`quoteExactInputSingle` via `.call()` (a genuine static call, not a sent transaction — the quoter is
+non-view by design and reverts to return its data) as a live fallback. See
+[FEEDBACK.md](./FEEDBACK.md) for a real integration issue found and reported during this build: the Trading
+API alternates unpredictably between a classic-route response and a completely differently-shaped
+UniswapX/Dutch-auction order response for the same request, unless `protocols: ["V3"]` is set.
 
-**0G Compute** runs every belief elicitation. Rather than pulling in the TypeScript SDK, we point the
-standard `openai` Python SDK at 0G's OpenAI-compatible Compute Router via `base_url`, keeping the entire
-stack in Python and reusing our existing elicitation code unchanged. Each response's attestation metadata is
-captured and surfaced per-context in the UI. This is what makes the incoherence proof unforgeable — without
-it, a skeptic could reasonably say we fabricated the agent's answers.
+**0G Compute** ([cohesion/inference.py](./cohesion/inference.py)) runs every belief elicitation, sequentially
+with exponential backoff — 5-way concurrency triggers `503`s and ~1 req/s serial triggers `429`s on 0G's
+router, so this is deliberately a plain loop, not `asyncio.gather`. Each response's attestation metadata
+(provider address, response ID, verifiability) is captured and surfaced per-sample in the UI, honestly
+labelled `"reported"` rather than `"verified"` when no cryptographic signature is present in the response.
+Selecting a usable subject model took real trial-and-error against the live mainnet router: several Claude
+models and a GLM reasoning model turned out to sit on an unhealthy provider or burn their entire token
+budget on hidden reasoning with no way to disable it; `deepseek-v4-flash` was the model that actually
+produced real sampling variance end to end (see `research.md`'s D10 for the full investigation).
 
 ### Two models, kept strictly separate
 
-- **Caller / orchestrator** — Claude Code or the dashboard user requesting a swap. Never the subject.
-- **Subject under test** — the agent whose beliefs get probed, running on 0G Compute.
-
-The demo narrative: *Claude Code is the orchestrator; the trading agent it would delegate capital to is the
-0G-hosted model; the guard tests that agent before the swap.*
+- **Caller / orchestrator** — Claude Code, the dashboard user, or any MCP client requesting a check. Never
+  the subject.
+- **Subject under test** — the agent named by the `model` argument, whose beliefs get probed on 0G Compute.
 
 ### Hacky bits worth mentioning
 
-1. **Subprocess-per-context isolation.** The measurement only means anything if the agent genuinely cannot
-   see its other answers. Rather than trusting conversation-history management, each elicitation is a fully
-   independent inference call — fresh process, fresh context window, provably no leakage. Nine run
-   concurrently via `ThreadPoolExecutor`, keeping a full run under ~45 seconds.
+1. **Process-isolated elicitation, not conversation discipline.** The measurement only means anything if the
+   agent genuinely cannot see its other answers. Each of the three contexts is a fully independent inference
+   call, never a shared conversation — instructing a single conversation to "answer independently" would be
+   unverifiable.
 
-2. **A leak bug that became a feature.** Our first grounded run showed incoherence *decreasing* (0.68×).
-   The market-data block was showing all three ratios to every context, letting the model infer the
-   constraint and enforce consistency it wouldn't otherwise have. We now slice the data block per-context.
-   That bug is also the cleanest proof the phenomenon is real: give the model the whole picture and it
-   becomes coherent; fragment it and it doesn't.
+2. **A leak bug that became a design principle.** An early, cruder prompt showed incoherence *decreasing*
+   when given the whole triangle's prices at once (0.68×) — the model could infer the closed-cycle
+   constraint and enforce consistency it wouldn't otherwise have. `build_context_slice` now slices the data
+   block per-context by construction, not by convention, and this is unit-tested.
 
-3. **No mocked-data fallback, anywhere.** If The Graph, 0G, or the quote is unavailable, the run fails
+3. **A price-direction bug the product check alone couldn't catch.** `graph_client.py`'s leg prices were
+   briefly inverted (WETH/USDC showing `0.000532` instead of `~1880`) — the three-leg product still passed
+   its 1% tolerance check throughout, because a *consistently* inverted convention also telescopes to 1.
+   Caught only by adding a CLI (`python -m cohesion.graph_client`) and inspecting the actual displayed
+   numbers against a known-good Trading API quote, not by trusting the product check alone.
+
+4. **No mocked-data fallback, anywhere.** If The Graph, 0G, or the quote is unavailable, the run fails
    visibly. A cached-price fallback would have been trivial and would have quietly invalidated every claim
-   the demo makes.
+   this project makes.
 
-**Same engine, two surfaces.** The dashboard and the MCP server call identical code paths, so
-`coherence_check(pair, amount, reps, model)` returns the same verdict object a human sees — meaning any
-MCP-capable agent can gate its own trades on it.
+**Same engine, two surfaces.** The dashboard (`server.py`) and the MCP server (`mcp_server.py`) both call
+`orchestrator.run_check()`/`run_calibration()` directly, with zero decision logic of their own — so the two
+interfaces return identical verdicts by construction, not by discipline. Verified live: the same
+model/pair/reps through both `GET /api/check` and the MCP `coherence_check` tool resolved to the same
+stored baseline and produced the same verdict shape.
 
 ---
 
@@ -176,27 +186,31 @@ MCP-capable agent can gate its own trades on it.
 | Sponsor | Track | How it is load-bearing |
 |---|---|---|
 | **The Graph** | Best AI Tooling | Live Uniswap v3 subgraph defines the triangle constraint; shipped as a reusable MCP server ("guardrail or auditor layer", not a single app) |
-| **Uniswap** | Best API Integration | The probe triangle wraps a real quoted swap; QuoterV2 produces the route the guard gates |
-| **0G** | Best Infrastructure & Tooling | Every elicitation runs on 0G Compute; TEE attestation makes the incoherence proof unforgeable |
+| **Uniswap** | Best API Integration | Trading API is the primary executable-quote path for the gated swap, with QuoterV2 as a live fallback; see [FEEDBACK.md](./FEEDBACK.md) |
+| **0G** | Best Infrastructure & Tooling | Every elicitation runs on 0G Compute; attestation metadata is captured and honestly labelled per-sample |
 
 ---
 
 ## Honest Assessment
 
-**Established:**
-- Models reliably place **3–9% of belief mass on logically impossible worlds** when contexts are separated
-- Signalling stays negligible (≤0.02), so the measurement is clean
-- Reproducible across 6+ independent runs
+**Established, live on mainnet:**
+- `deepseek-v4-flash` reliably places **~25–27% of belief mass on logically impossible worlds** on this
+  prompt when contexts are separated (`baselines.json`, n=12)
+- Reproducible: a second independent 9-rep run landed at `disagreement_sum=1.473` (95% CI `[1.422, 1.525]`),
+  clearly overlapping the stored baseline's `1.484 ± 0.079`
+- Signalling (max marginal spread across contexts) stays low, so the measurement is clean
 
 **Not established — and not claimed:**
-- That live market data amplifies incoherence (1.32× observed, within noise)
-- That poisoned oracle feeds are detected — one test of a crude +15pp spoof moved the metric the *wrong*
-  direction (0.28×). Consistent lies get coherently believed. Subtle multi-leg attacks are untested.
-- That incoherence predicts P&L
+- That a deliberate degradation reliably produces a `VETO`. A prior crude uniform-corruption test on an
+  earlier prompt version moved the metric the *wrong* direction (0.28×) — a consistent lie gets coherently
+  believed. This project does not ship a degraded-input demo mode; if we can't reproduce a real veto
+  honestly, we don't fake one.
+- That incoherence predicts P&L.
 
-**The framing:** *coherent ≠ correct.* We detect self-contradiction, not wrongness. Like a compiler
-type-check — passing doesn't prove your program correct, but failing proves it's broken. Cohesion is a
-pre-trade sanity check on reasoning, never an alpha generator.
+**The framing:** *coherent ≠ correct.* We detect self-contradiction and drift from an agent's own normal,
+not wrongness. Like a compiler type-check — passing doesn't prove your program correct, but failing proves
+something changed. Cohesion is a pre-trade sanity check on reasoning, never an alpha generator, and every
+surface says so explicitly (see the `VETO` warning copy in `web/index.html`).
 
 **One more limit worth stating:** coherence catches *fragmented* compromise (asymmetric prompt injection, a
 split-brain data feed), not *uniform* compromise. An agent biased consistently in one direction passes the
@@ -221,32 +235,45 @@ The three context tables form a **presheaf**; coherence is precisely the questio
 ## Repository
 
 ```
-coherence/
-  core.py          # LP incoherence measure + confidence intervals
-  graph_client.py  # Uniswap v3 subgraph queries      <- The Graph
-  uniswap.py       # QuoterV2 staticCall              <- Uniswap
-  inference.py     # 0G Compute Router client         <- 0G
-  triangle.py      # swap route -> propositions + per-context prompts
-  server.py        # FastAPI, SSE stream, serves web/
-  mcp_server.py    # MCP tool: coherence_check()
+cohesion/
+  core.py          # incoherence LP + t-distribution CI + reading assembly    (pure, unit-tested)
+  triangle.py       # probe construction, propositions, leak-safe prompts     (pure, unit-tested)
+  baseline.py        # key derivation, atomic storage, drift-verdict decision  (unit-tested)
+  graph_client.py     # live Uniswap v3 pool data                              <- The Graph
+  uniswap.py           # Trading API quote + QuoterV2 fallback                  <- Uniswap
+  inference.py          # 0G Compute Router client + attestation capture        <- 0G
+  orchestrator.py        # run_calibration() / run_check(), shared by both interfaces
+  server.py                # FastAPI, SSE endpoints, serves web/
+  mcp_server.py             # stdio MCP: coherence_check / _calibrate / _baselines
 web/
-  index.html       # single-page dashboard, no build step
-experiments/       # day-one validation runs (first hours of the event)
-specs/             # Spec Kit artifacts (spec, plan, tasks)
+  index.html         # single-page dashboard (calibrate + trade/gate), no build step
+tests/unit/
+  test_core.py        # LP, CI, six-worlds enumeration
+  test_baseline.py      # key derivation, atomic write, all 5 verdict boundaries
+scripts/
+  probe_0g.py           # standalone 0G connectivity + sampling-variance sweep
+specs/                 # Spec Kit artifacts (spec, plan, tasks, research, contracts)
+experiments/          # day-one validation runs (first hours of the event)
 ```
 
 ## Running It
 
 ```bash
-cp .env.example .env    # GRAPH_API_KEY, ZG_API_KEY, ETH_RPC_URL
+cp .env.example .env    # GRAPH_API_KEY, UNISWAP_API_KEY, ZG_API_KEY, ETH_RPC_URL
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn coherence.server:app
+pytest tests/unit -v    # 20/20, pure math + baseline logic, no network needed
+uvicorn cohesion.server:app --port 8000
 ```
 
-Open `localhost:8000`, set up a swap, and run the check. Default is 3 reps per context (~45s); the slider
-goes to 9 for higher confidence.
+Open `localhost:8000`. The repo ships a real calibrated baseline (`baselines.json`, `deepseek-v4-flash` /
+WETH-USDC-WBTC), so you can run a check against it immediately without recalibrating first — default is 3
+reps per context (~35s), the calibrate slider goes to 9–15 for a fresh baseline.
 
-### Reproducing the original validation
+**MCP:** `.mcp.json` registers `cohesion` for Claude Code (`python3 -m cohesion.mcp_server`, stdio). See
+[contracts/mcp-tools.md](./specs/001-agent-coherence-guard/contracts/mcp-tools.md) for the tool schemas.
+
+### Reproducing the original day-one validation
 
 ```bash
 cd experiments
@@ -256,7 +283,9 @@ python3 -m venv venv
 ./venv/bin/python coherence_ab.py 5      # A/B blind vs grounded, 5 reps
 ```
 
-Uses the local `claude` CLI as the model under test. Each run ~5–10 minutes.
+Uses the local `claude` CLI as the model under test. Each run ~5–10 minutes. This was the first-hours
+validation that motivated the whole project — the shipped system uses 0G Compute, not the local CLI, as its
+subject model.
 
 ---
 

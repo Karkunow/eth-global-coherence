@@ -8,9 +8,7 @@ API Integration track. Integration code: [cohesion/uniswap.py](./cohesion/uniswa
 
 - The API key issuance was fast and self-serve — no waiting, no manual review, which mattered
   a lot on a 24-hour clock.
-- `POST /v1/quote`'s response for a classic swap is genuinely good once you get the right shape:
-  a full route with per-hop pool addresses, fee tiers, gas estimate, and both a point quote and
-  a slippage-adjusted minimum — everything a downstream consumer needs in one call.
+- `POST /v1/quote`'s response for a classic swap is genuinely good once you get the right shape.
 
 ## The friction point worth reporting
 
@@ -24,8 +22,7 @@ across consecutive calls with no parameter changes:
   no `route`, no `gasUseEstimate`, no concrete `output` amount in the same place.
 
 For a consumer that needs a concrete `amount_out` / `fee_tier` / `gas_estimate` / `pool_address`
-(any dashboard, any downstream contract call, any risk system — not just ours), this is a real
-integration hazard: code written and tested against one shape will silently break the first time
+(any dashboard, any downstream contract call, any risk system — not just ours), this looks bad: code written and tested against one shape will silently break the first time
 the router decides to return the other, with no client-side signal that the shape changed.
 
 **What fixed it, found by trial and error, not documentation:** adding `"protocols": ["V3"]` to
@@ -45,10 +42,3 @@ via the API's own validation error), neither of which controls CLASSIC vs. Unisw
 3. A response-shape example for the UniswapX/Dutch case alongside the classic one in the docs
    would have cut a real debugging session (isolating this took longer than the rest of the
    Trading API integration combined).
-
-## Smaller note
-
-QuoterV2's non-view `quoteExactInputSingle` (must be called via `.call()`/`eth_call`, not a sent
-transaction, since it reverts to return data) is already flagged in the docs, and we hit it
-without incident — just noting the existing warning is correctly placed and was genuinely
-useful; keep it.

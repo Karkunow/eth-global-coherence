@@ -204,23 +204,33 @@ An earlier run showed 0.68x because the third ratio leaked and let the model inf
 The `speckit-specify` input, drafted from the decisions already made (the template mandates prioritized,
 independently-testable user stories — hand it these three rather than letting it invent its own):
 
-> Build a **pre-trade coherence guard** for autonomous trading agents that lets an operator verify an AI
-> agent's beliefs about a multi-leg swap route are internally consistent *before* capital moves, by
-> eliciting the agent's probabilities in isolated contexts and proving via linear programming whether they
-> can glue into a single joint distribution. Constraints: live Uniswap v3 pool data from The Graph (never
-> mocked), inference on 0G Compute, a browser dashboard plus an MCP server sharing one engine, and a full
-> run must complete in under ~45 seconds at the default setting (reps=3).
+> Build **Cohesion**, a reasoning health check for AI agents that gates trades before capital moves. It
+> measures whether an agent's beliefs about correlated market variables could all be true at once, by
+> eliciting probabilities in isolated contexts and testing via linear programming whether they can glue into
+> a single joint distribution. Because every model carries some baseline incoherence, the pass/fail decision
+> is made against that agent's own **calibrated baseline**, not against the theoretical ideal — the guard
+> fires on *drift*, which is what makes it usable as a gate and what lets it detect silent model degradation.
+> Constraints: live Uniswap v3 pool data from The Graph (never mocked), inference on 0G Compute, a browser
+> dashboard plus an MCP server sharing one engine, and a check must complete in under ~45 seconds at reps=3.
 >
-> **P1 (viable alone):** a user sets up an ordinary swap (pair + amount) in the browser dashboard, gets a
-> real Uniswap quote, and clicks Execute — which is gated by the guard: the system builds a probe triangle
-> around the pair, streams in three isolated forecasts with attestation stamps, renders the disagreement sum
-> with its confidence interval against the 2.000 mark, and either releases the Execute action or vetoes it
-> with the incoherence % and the six-worlds breakdown. (No on-chain send; the gate on the button is the demo.)
-> **P2:** another AI agent calls the same engine via MCP with a swap pair and gets a structured verdict
-> (PASS/VETO, incoherence %, sum, CI, baseline comparison) it can act on programmatically — demoed live in Claude Code
-> alongside Uniswap's own MCP tooling, with the agent's swap vetoed mid-conversation.
-> **P3:** the operator adjusts reps (1–9) to trade speed against statistical confidence, with sub-3 runs
-> clearly labeled provisional.
+> **P1 (viable alone) — calibrate an agent.** An operator selects an agent (model + system prompt) and a
+> swap pair, and runs calibration: the system builds a probe triangle around the pair from live pool data,
+> elicits the agent's forecasts in three isolated contexts at 9–15 reps each, and stores the resulting mean,
+> standard deviation, and sample size as that agent's baseline health profile, keyed by model, prompt, data
+> source, and triangle. The operator sees the agent's normal incoherence level (e.g. "4.5%"). This alone is
+> useful: it is a published health score for an agent.
+>
+> **P2 — gate a swap against the baseline.** A user sets up an ordinary swap (pair + amount) in the
+> dashboard, gets a real Uniswap quote, and clicks Execute — which is gated: the system runs a check at
+> reps=3, streams in the three isolated forecasts with their 0G attestation stamps, and compares the result
+> to the stored baseline with a two-sample test. Within baseline → PASS, Execute unlocks. Significantly
+> worse → VETO, Execute stays locked. No stored baseline → no verdict at all, with a prompt to calibrate
+> first. Every verdict displays its confidence level and reps count. (No on-chain send; the gate is the demo.)
+>
+> **P3 — agent-callable via MCP.** Another AI agent calls the same engine over MCP with a swap pair and
+> receives a structured verdict (PASS/VETO/NO_BASELINE, incoherence %, disagreement sum, confidence interval,
+> baseline comparison) it can act on programmatically — demoed in Claude Code alongside Uniswap's own MCP
+> tooling, with the agent's own swap vetoed mid-conversation.
 
 **EARS acceptance criteria** (the demoed behaviour — carry these into the spec verbatim):
 

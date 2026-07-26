@@ -37,11 +37,11 @@
 <p class="tagline">Does your agent's reasoning hold together?</p>
 
 <div class="explain-card">
-  <h2>Your own 0G API key (optional)</h2>
+  <h2>Your own 0G API key (optional for swap)</h2>
   <p>Every run below spends real 0G inference calls. Leave this blank to use this deployment's
     key; fill it in and your calibrations/checks run against your own 0G balance instead —
     it's sent as a request header, never stored server-side.</p>
-  <input id="own-zg-key" type="password" placeholder="0G API key (optional)" autocomplete="off">
+  <input id="own-zg-key" type="password" placeholder="0G API key (optional for swap)" autocomplete="off">
   <p class="small" style="margin-top:0.6rem;">No 0G key needed to actually <strong>execute a real Uniswap
     swap</strong> — that part doesn't touch 0G at all.<br>Just: Run coherence check → Connect Wallet → Sign
     &amp; prepare with wallet → Send transaction.</p>

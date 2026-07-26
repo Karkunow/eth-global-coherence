@@ -39,7 +39,7 @@ import urllib.request
 
 DEFAULT_API_BASE = "https://router-api.0g.ai/v1"
 DEFAULT_RPC = "https://evmrpc.0g.ai"
-DEFAULT_MODEL = "claude-sonnet-5"  # cheapest Claude on 0G mainnet; test here before Opus
+DEFAULT_MODEL = "deepseek-v4-flash"  # confirmed via sweep 2026-07-26: sd=0.05, n=3, 6.4s. See .env.example.
 
 # The real production prompt shape (persona + explicit correlation instruction +
 # live-style market data). This is deliberate: an earlier, more abstract prompt
@@ -83,35 +83,56 @@ def rpc(url, method, params):
 
 
 def call(api_base, key, model, text, temp=1.0, extra=None, tries=3):
-    """One elicitation with backoff. Returns (parsed_dict_or_None, error_str_or_None, headers, raw_body)."""
-    payload = {"model": model, "messages": [{"role": "user", "content": text}], "max_tokens": 150}
-    # Claude Sonnet 5 / Opus 4.8 do not list temperature/top_p in their
-    # supported_parameters on 0G's /v1/models (verified 2026-07-26) — they use
-    # thinking: {type: "adaptive"} instead, matching real Anthropic API
-    # behavior. Sending temperature to them is unverified (silent ignore vs
-    # 400) and unnecessary: the CLI cross-check already showed real variance
-    # from Claude with no temperature override at all. Only force temperature
-    # for non-Claude models (qwen, deepseek, gpt-*, glm, kimi, ...), where the
-    # OpenAI-compatible surface is the documented one.
-    if not model.startswith("claude-"):
-        payload["temperature"] = temp
+    """One elicitation with backoff. Returns (parsed_dict_or_None, error_str_or_None, headers, raw_body).
+
+    Claude models on 0G's router (verified 2026-07-26 via /v1/models'
+    supported_formats field) are NOT served on the OpenAI /chat/completions
+    surface at all -- they require the Anthropic /messages shape (x-api-key,
+    anthropic-version, content is a block list). Also: without a browser-like
+    User-Agent, Cloudflare 403s the request before it ever reaches the router
+    (error code 1010) -- unrelated to auth/balance, easy to misdiagnose as an
+    API error.
+    """
+    is_claude = model.startswith("claude-")
+    if is_claude:
+        url = f"{api_base}/messages"
+        payload = {"model": model, "messages": [{"role": "user", "content": text}], "max_tokens": 150}
+        headers = {"Content-Type": "application/json", "x-api-key": key,
+                   "anthropic-version": "2023-06-01", "User-Agent": "curl/8.4.0"}
+    else:
+        url = f"{api_base}/chat/completions"
+        payload = {"model": model, "messages": [{"role": "user", "content": text}],
+                   "max_tokens": 300, "temperature": temp}
+        # deepseek-v4-flash/pro are reasoning models that otherwise burn the
+        # entire max_tokens budget on hidden reasoning_content and never emit
+        # a final answer (finish_reason=length, content=""). Confirmed on
+        # mainnet 2026-07-26: unlike glm-5.2 (which ignores this same class of
+        # flag and always reasons to the token limit regardless), deepseek
+        # actually honors enable_thinking=False -- verified via finish_reason
+        # flipping from "length" to "stop".
+        if model.startswith("deepseek-"):
+            payload["enable_thinking"] = False
+        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {key}",
+                   "User-Agent": "curl/8.4.0"}
     if extra:
         payload.update(extra)
     body = json.dumps(payload).encode()
     for attempt in range(tries):
         try:
-            req = urllib.request.Request(
-                f"{api_base}/chat/completions", data=body,
-                headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"})
+            req = urllib.request.Request(url, data=body, headers=headers)
             resp = urllib.request.urlopen(req, timeout=90)
             raw = resp.read().decode()
-            headers = dict(resp.headers)
+            resp_headers = dict(resp.headers)
             data = json.loads(raw)
-            content = data["choices"][0]["message"]["content"]
+            if is_claude:
+                blocks = data.get("content", [])
+                content = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
+            else:
+                content = data["choices"][0]["message"]["content"]
             import re
             m = re.search(r"\{[^{}]*\}", content, re.S)
             parsed = json.loads(m.group(0)) if m else None
-            return parsed, None, headers, data
+            return parsed, None, resp_headers, data
         except urllib.error.HTTPError as e:
             detail = e.read().decode()[:300]
             if e.code in (429, 503) and attempt < tries - 1:

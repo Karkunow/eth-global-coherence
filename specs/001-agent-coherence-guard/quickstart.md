@@ -18,7 +18,7 @@ These are validation scenarios, not implementation. Module contracts are in [con
 | `ETH_RPC_URL` | Any RPC provider free tier | Instant |
 | `ZG_API_KEY` | Verifiable-inference provider | ⚠️ **Mainnet required — see below** |
 
-> **Inference account: network target revised 2026-07-26 (research D10).** Testnet funding (10.0 0G on Galileo, chain 16602) is real and its auth/endpoint/parsing all work — but testnet has exactly **one** chat model, `qwen2.5-omni`, and it is **deterministic on the production prompt**: 32/32 identical responses across every temperature, `top_p`, and penalty combination tried. A Claude-tier model does not have this problem (cross-checked via local `claude` CLI: real sampling variance, `sd=0.021`). **Target mainnet** — 22 chat models available, `claude-opus-4-8` confirmed listed.
+> **Inference account: mainnet funded, subject model resolved 2026-07-26 (research D10).** Testnet's only chat model, `qwen2.5-omni`, is deterministic on the production prompt (32/32 identical across every sampling parameter). On mainnet, the Claude models and `gpt-5.6-luna/sol/terra` all sit on one provider that is `is_healthy: false` and rejects every funding attempt with `BALANCE_INSUFFICIENT` — treat that provider as broken infrastructure, not a funding mistake to keep retrying. `glm-5.2` calls succeed but burn the entire token budget on hidden reasoning and never emit an answer (`finish_reason: "length"` even at `max_tokens=4000`). **`deepseek-v4-flash` is the confirmed subject model**: `enable_thinking=false` is honored, and a real sweep shows genuine variance (`sd=0.05`, n=3, 6.4s total). `ZG_MODEL=deepseek-v4-flash` is now the default.
 >
 > **A single successful call does not prove a model is usable.** `qwen2.5-omni` passed exactly this kind of single-call check before the sweep revealed it was frozen. Scenario 4 below now requires the sweep, not just one call.
 
@@ -136,6 +136,8 @@ python scripts/probe_0g.py --sweep --n 8
 ```
 
 **Expect**: `sd > 0` on the printed `P(X!=Y)` values, with a verdict line reading `✓ REAL VARIANCE`. If it instead reads `✗ ZERO VARIANCE`, **stop** — do not proceed to calibration with this model. Try a different `ZG_MODEL` and re-run the sweep before building anything further on it.
+
+**Confirmed 2026-07-26** against `deepseek-v4-flash` on mainnet: `n=3, mean=0.45, sd=0.05, 6.4s total` — real variance, verdict passed. That was a quick 3-rep go/no-go check; re-run at `--n 8` for a fuller pre-calibration read before relying on it further.
 
 **Validates**: FR-008, and — critically — the precondition FR-011/FR-012 depend on (that `std_error` is a real, non-degenerate number).
 

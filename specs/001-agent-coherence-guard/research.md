@@ -197,6 +197,25 @@ rep 5: p_X_true_Y_false=0.45  p_X_false_Y_true=0.32   P(X≠Y)=0.77
 
 **What does NOT need to change**: D1 (baseline-relative gating), D2 (t-distribution CI math), the elicitation methodology in D3, and the prompt template itself. All are validated by the Claude cross-check. Only the subject model changes.
 
+**[RESOLVED 2026-07-26 — mainnet funded, subject model selected.]** The "select a Claude-tier model" plan above did not survive contact with the actual mainnet deployment. What was found, in order:
+
+1. **Claude models (fable-5/opus-4-8/sonnet-5) and gpt-5.6-luna/sol/terra all share one provider** (`0x1F444c8A8D0b8e99A50e9f165806d28B01916E04`), which is `is_healthy: false` in `/v1/providers` and returns `403 BALANCE_INSUFFICIENT` regardless of how the ledger and provider sub-account are funded. Tested: funding via the portal's Advanced per-provider flow (2.00 0G confirmed allocated), general ledger deposit (3.00 0G confirmed "spendable on inference"), retrying after propagation delay, and calling through both the shared router and that provider's own dedicated satellite endpoint (see below). All failed identically. This provider looks broken on 0G's infrastructure side — not a client-side setup mistake — and no further time should go into re-funding it.
+2. **A separate, unrelated trap along the way**: some portal-issued API keys are scoped to one provider's own satellite endpoint — a third-party gateway (`https://<name>.integratenetwork.work`) sitting in front of 0G, with a distinct path (`/v1/proxy/messages`), distinct auth (`Authorization: Bearer app-sk-<base64(message:signature)>`, not `x-api-key`), and its own balance cache independent of the main router's. Such a key gets a plain `401` on the shared router (`router-api.0g.ai`). Fix: use a general-purpose key from the main "Create key" flow, not the per-provider "Advanced" flow, when targeting the shared router.
+3. **`glm-5.2`** has healthy providers (e.g. `0x7DCFe6AEa70350C2090041524c9B4A9262DCe87D`) and calls succeed with real TEE attestation (`TeeML`/TDX) — but it is a reasoning model that spends its *entire* `max_tokens` budget on hidden `reasoning_content` and never reaches a final answer: `finish_reason: "length"` at `max_tokens` = 150, 2000, and 4000 alike, with `reasoning_tokens` exactly equal to `max_tokens` every time. `reasoning_effort`, `thinking.disabled`, and `chat_template_kwargs.thinking=false` are all listed in `supported_parameters` but none of them changed this — the router does not forward them, the same failure shape as `qwen2.5-omni` ignoring `temperature` on testnet (D10 above).
+4. **`deepseek-v4-flash`** — also a reasoning model, but its `enable_thinking: false` flag *is* honored (confirmed directly: `finish_reason` flips from `"length"` to `"stop"` when set). 3 healthy providers. **Selected as the subject model.**
+
+D10 sweep re-run against `deepseek-v4-flash` on mainnet (n=3, temp=1.0, sequential, unique nonce per call — same methodology as the table above):
+
+```
+rep 0: P(X≠Y)=0.50
+rep 1: P(X≠Y)=0.40
+rep 2: P(X≠Y)=0.45
+```
+
+`mean = 0.45, sd = 0.05, std_error(n=3) = 0.0289`. Real, non-degenerate variance — verdict: **usable**. Total wall time 6.4s for 3 calls, well inside the 45s/reps=3 budget (SC-002), though this is n=3 for a quick go/no-go check; a fuller n=8 sweep per the original D10 methodology is still recommended before final calibration.
+
+`ZG_MODEL=deepseek-v4-flash` is now the default in `.env.example` and `scripts/probe_0g.py`.
+
 ---
 
 ## Open items carried into implementation
@@ -208,7 +227,7 @@ rep 5: p_X_true_Y_false=0.45  p_X_false_Y_true=0.32   P(X≠Y)=0.77
 | O3 | Provider rate limits under calibration load | **RESOLVED** ⚠️ — worse than expected | 5-way concurrency → `503`; ~1 req/s serial → `429`. Revised to sequential + backoff (D8). Calibration (27–45 calls) will take noticeably longer than originally assumed; no longer treated as "probably fine," must be timed for real once the mainnet model is selected. |
 | O4 | Hosted trading API key | **RESOLVED** ✅ | Key obtained 2026-07-26. Trading API is now the primary quote path (D5), unlocking the $7k track. Store as `UNISWAP_API_KEY` in `.env`. **Carries three hard qualification requirements — `FEEDBACK.md`, the feedback-form submission linking to it, and a README pointing at the integration lines.** |
 | O5 | Whether a deliberate degradation reliably produces a veto (SC-007) | **[unverified]** | Must be validated once before being demonstrated. A prior crude uniform-corruption test moved the metric the *wrong* way (0.28×), so the degradation must be **asymmetric** — different premises to different contexts — which breaks gluing mechanically rather than hopefully. If it does not reproduce, drop the claim rather than weaken the confidence bar. Re-validate against whichever model D10 selects — the qwen2.5-omni-era result may not transfer. |
-| O6 | Subject model produces genuine sampling variance | **RESOLVED — testnet fails, mainnet required** ❌➡️ | See D10. `qwen2.5-omni` is deterministic on the production prompt across 32 calls and every sampling parameter tried. A Claude-tier model, cross-checked via local CLI, shows the expected variance (`sd=0.021`). Fund mainnet and re-verify against the actual 0G-hosted model before building further on it. |
+| O6 | Subject model produces genuine sampling variance | **RESOLVED ✅** | See D10. `qwen2.5-omni` (testnet) and `glm-5.2` (mainnet, runaway reasoning) both ruled out; the Claude/gpt-5.6-luna provider on mainnet is broken infrastructure-side. `deepseek-v4-flash` confirmed working: `enable_thinking=false` honored, real variance (`sd=0.05`, n=3), 6.4s total. This is now `ZG_MODEL`. |
 
 ---
 

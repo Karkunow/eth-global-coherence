@@ -50,8 +50,9 @@ _JSON_RE = re.compile(r"\{[^{}]*\}", re.S)
 _REQUIRED_KEYS = ("p_XY_both_true", "p_X_true_Y_false", "p_X_false_Y_true", "p_both_false")
 
 
-def _request(cfg: Config, prompt: str, max_tokens: int, tries: int, request_timeout: float) -> dict:
-    model = cfg.zg_model
+def _request(cfg: Config, prompt: str, max_tokens: int, tries: int, request_timeout: float,
+             model: str | None = None) -> dict:
+    model = model or cfg.zg_model
     is_claude = model.startswith("claude-")
     if is_claude:
         url = f"{cfg.zg_api_base.rstrip('/')}/messages"
@@ -100,7 +101,7 @@ def _extract_content(data: dict, is_claude: bool) -> str:
     return data["choices"][0]["message"]["content"]
 
 
-def _extract_attestation(cfg: Config, data: dict, headers: dict) -> Attestation:
+def _extract_attestation(model: str, data: dict, headers: dict) -> Attestation:
     trace = data.get("x_0g_trace", {})
     provider_address = headers.get("x-provider") or headers.get("X-Provider") or trace.get("provider")
     response_id = headers.get("zg-res-key") or trace.get("request_id")
@@ -111,7 +112,7 @@ def _extract_attestation(cfg: Config, data: dict, headers: dict) -> Attestation:
             signature = v
             break
     return Attestation(
-        model_reported=cfg.zg_model,
+        model_reported=model,
         response_id=response_id,
         provider_address=provider_address,
         verifiability="verified" if has_signature else "reported",
@@ -140,15 +141,17 @@ def _parse_distribution(content: str) -> tuple | None:
 
 
 def elicit(cfg: Config, prompt: str, max_tokens: int = 300, tries: int = 3,
-           request_timeout: float = 90.0) -> ElicitationResult:
-    """One forecast. Raises InferenceUnavailable if the provider cannot be
-    reached at all; returns a result with distribution=None (discarded,
-    not repaired) if the response can't be parsed into a valid forecast."""
-    result = _request(cfg, prompt, max_tokens, tries, request_timeout)
+           request_timeout: float = 90.0, model: str | None = None) -> ElicitationResult:
+    """One forecast against `model` (the AgentConfig under test), or
+    cfg.zg_model if not given. Raises InferenceUnavailable if the provider
+    cannot be reached at all; returns a result with distribution=None
+    (discarded, not repaired) if the response can't be parsed into a valid
+    forecast."""
+    result = _request(cfg, prompt, max_tokens, tries, request_timeout, model=model)
     data, headers, is_claude = result["data"], result["headers"], result["is_claude"]
     content = _extract_content(data, is_claude)
     distribution = _parse_distribution(content)
-    attestation = _extract_attestation(cfg, data, headers)
+    attestation = _extract_attestation(model or cfg.zg_model, data, headers)
     return ElicitationResult(
         distribution=distribution,
         attestation=attestation,

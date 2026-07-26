@@ -57,6 +57,31 @@ def incoherence_lp(marginals: dict, domain: bool = True) -> float:
     return max(0.0, 1.0 - mass)
 
 
+def disagreement_sum_trials(samples_by_context: dict) -> list:
+    """Pairs rep i across all three contexts into one disagreement_sum
+    observation per trial: trial(i) = disagreement(A,B; rep i) +
+    disagreement(B,C; rep i) + disagreement(A,C; rep i).
+
+    Distinct from confidence_interval()'s per-context SE combination
+    (which describes the uncertainty of a single aggregate reading). This
+    produces genuine independent-trial samples of the disagreement_sum
+    statistic, which is what baseline storage and the two-sample drift
+    test (baseline.py) need -- Welch's t-test compares two sets of trial
+    observations of the same statistic, not two SE-derived intervals.
+    """
+    if not samples_by_context:
+        return []
+    reps = min(len(v) for v in samples_by_context.values())
+    trials = []
+    for i in range(reps):
+        total = 0.0
+        for ctx in CONTEXTS:
+            dist = samples_by_context[ctx][i]
+            total += dist[1] + dist[2]
+        trials.append(total)
+    return trials
+
+
 @dataclass(frozen=True)
 class ConfidenceInterval:
     std_error: float | None

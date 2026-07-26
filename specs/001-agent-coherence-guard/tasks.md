@@ -188,3 +188,23 @@ Task: "Implement the drift-verdict decision rule in cohesion/baseline.py per T02
 - `tests/unit/` tasks cover only the pure-math core and the drift-verdict boundaries, matching plan.md's explicit testing posture — do not add mocked integration tests against `graph_client.py`, `uniswap.py`, or `inference.py` (FR-004 forbids the fallback path that mocking would require)
 - Commit after each task or logical group, per the project's incremental-commit convention
 - Stop at any checkpoint to validate a story independently before continuing
+
+---
+
+## Phase 7: Degraded-Mode Demo Toggle (post-launch stretch)
+
+**Added lightweight, without a full spec/plan cycle** — this is an operator/demo affordance within
+User Story 2's already-speced scope (advise on a trade against the baseline), not a new capability, and the
+underlying mechanism is already validated live (research.md D11, attempt 3: `VETO` at `p=4.98e-6`). A full
+`speckit-specify` → `plan` → `tasks` cycle would be disproportionate ceremony for a small, well-understood
+addition — tracked here instead.
+
+**Non-negotiable constraint carried over from FR-004**: this must never be reachable from, or confusable
+with, the real advisory-gate path. Separate function, separate endpoint, unmissable labeling — not a hidden
+flag on `run_check()`/`GET /api/check`, so the real path stays textually untouched and every existing
+grep/audit against it keeps passing.
+
+- [ ] T033 [P] Implement `orchestrator.run_check_degraded_demo()` in `cohesion/orchestrator.py`: mirrors `run_check()`'s event sequence but overrides the `(A,B)` and `(A,C)` context data blocks with the validated contradictory-claim injection on proposition A (research D11 attempt 3), leaving `(B,C)` and all live pool/quote data untouched. Emits a `demo_notice` event before `probe` stating plainly that context data is synthetically injected for demonstration. A clearly separate code path from `run_check()`, never called by it.
+- [ ] T034 [US2-adjacent] Implement `GET /api/check-degraded-demo` (SSE) in `cohesion/server.py`, wrapping T033 — distinct route from `/api/check`, same error-code mapping.
+- [ ] T035 [US2-adjacent] Add a clearly-labeled "Demo: synthetic contradiction (for demonstration only)" control to `web/index.html`'s trade/gate section, rendering a persistent orange/red banner for the duration of that run distinguishing it from a real check, wired to T034 instead of `/api/check`.
+- [ ] T036 Manual verification: run the demo toggle end to end, confirm it reproduces `VETO` live, confirm the real "Run coherence check" path is completely unaffected (same PASS behavior as before this phase).

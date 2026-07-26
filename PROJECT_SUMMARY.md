@@ -2,7 +2,7 @@
 
 **Event:** ETHGlobal Lisbon 2026 (July 24-26, 2026)  
 **Builder:** Slava Karkunov (@karkunow@gmail.com)  
-**Status:** Pre-hackathon validation & research  
+**Status:** Day-one validation complete; product build in progress  
 **Registration Deadline:** July 24, 2026 (today)
 
 ---

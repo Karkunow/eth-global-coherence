@@ -231,7 +231,7 @@ coherence/
   mcp_server.py    # MCP tool: coherence_check()
 web/
   index.html       # single-page dashboard, no build step
-experiments/       # pre-hackathon validation runs
+experiments/       # day-one validation runs (first hours of the event)
 specs/             # Spec Kit artifacts (spec, plan, tasks)
 ```
 

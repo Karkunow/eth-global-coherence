@@ -101,7 +101,7 @@ tests/
     ├── test_core.py     # LP correctness, CI arithmetic, six-worlds enumeration
     └── test_baseline.py # Drift verdict boundaries, key derivation, no-baseline path
 
-experiments/             # Pre-existing validation scripts (unchanged by this feature)
+experiments/             # Day-one validation scripts (unchanged by this feature)
 baselines.json           # Created at first calibration; committed for reproducibility
 ```
 

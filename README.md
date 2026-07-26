@@ -200,6 +200,14 @@ non-view by design and reverts to return its data) as a live fallback. See
 API alternates unpredictably between a classic-route response and a completely differently-shaped
 UniswapX/Dutch-auction order response for the same request, unless `protocols: ["V3"]` is set.
 
+**This isn't just calldata construction — it's a verified, mined, successful swap.** The dashboard's wallet
+flow (connect MetaMask → approve Permit2 on-chain → sign the EIP-712 permit → send) was run end to end on
+Ethereum mainnet:
+[`0xde7d3fbdee59d9677551fd00988ea2ab1feecd80ce2762c0b81164d22b4ccc03`](https://etherscan.io/tx/0xde7d3fbdee59d9677551fd00988ea2ab1feecd80ce2762c0b81164d22b4ccc03) —
+`0.0001 WETH → 0.188143 USDC`, block 25617169, `status: success`, routed through Uniswap's Universal Router
+with a real Permit2 signature. No custody, no server-side key — the signature and the broadcast both
+happened in the user's own wallet.
+
 **0G Compute** ([cohesion/inference.py](./cohesion/inference.py)) runs every belief query, sequentially
 with exponential backoff — 5-way concurrency triggers `503`s and ~1 req/s serial triggers `429`s on 0G's
 router, so this is deliberately a plain loop, not `asyncio.gather`. Each response's attestation metadata

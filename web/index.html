@@ -169,10 +169,6 @@
   </div>
 
   <div id="check-verdict"></div>
-
-  <div style="margin-top:1rem;">
-    <button id="execute-btn" disabled>Execute — awaiting coherence check</button>
-  </div>
 </fieldset>
 
 <fieldset>
@@ -367,18 +363,6 @@ function renderGauge(reading, baselineData) {
     ' · 2.0 perfect coherence is green mark';
 }
 
-function lockExecute(label) {
-  const btn = document.getElementById('execute-btn');
-  btn.disabled = true;
-  btn.textContent = label;
-}
-
-function unlockExecute() {
-  const btn = document.getElementById('execute-btn');
-  btn.disabled = false;
-  btn.textContent = 'Execute';
-}
-
 async function runCheck(endpoint) {
   endpoint = endpoint || '/api/check';
   const isDemo = endpoint !== '/api/check';
@@ -394,7 +378,6 @@ async function runCheck(endpoint) {
   checkBtn.disabled = true;
   demoBtn.disabled = true;
   demoBanner.style.display = isDemo ? 'block' : 'none';
-  lockExecute('Execute — awaiting coherence check');
   quoteBox.textContent = '';
   document.getElementById('show-tx-btn').style.display = 'none';
   document.getElementById('swap-tx-box').style.display = 'none';
@@ -474,7 +457,6 @@ async function runCheck(endpoint) {
             <b>PASS</b> — confidence ${(data.confidence * 100).toFixed(0)}%, reps ${data.reading.reps}
             ${data.note ? `<div class="small">${data.note}</div>` : ''}
           </div>`;
-          unlockExecute();
         } else {
           const label = outcome === 'VETO' ? 'VETO — reasoning has drifted from baseline'
                       : outcome === 'NO_BASELINE' ? 'NO BASELINE — calibrate this configuration first'
@@ -487,15 +469,7 @@ async function runCheck(endpoint) {
           verdictBox.innerHTML = `<div class="result warn">
             <b>${label}</b> — confidence ${(data.confidence * 100).toFixed(0)}%, reps ${data.reading.reps}
             <div class="small">${explain}</div>
-            <label style="margin-top:0.5rem; display:flex; align-items:center; gap:0.4rem;">
-              <input type="checkbox" id="ack-checkbox"> I understand this warning and want to proceed anyway.
-            </label>
           </div>`;
-          lockExecute(`Execute — ${outcome}, acknowledge warning above to proceed`);
-          document.getElementById('ack-checkbox').addEventListener('change', (e) => {
-            if (e.target.checked) unlockExecute();
-            else lockExecute(`Execute — ${outcome}, acknowledge warning above to proceed`);
-          });
         }
       } else if (event === 'error') {
         verdictBox.innerHTML = `<div class="result err"><b>${data.error}</b>: ${data.detail}</div>`;
@@ -760,12 +734,6 @@ document.getElementById('wallet-send-btn').addEventListener('click', async () =>
   }
 });
 
-document.getElementById('execute-btn').addEventListener('click', () => {
-  // No execute/submit/sign path exists in this scope (FR-027) -- the gate
-  // and its acknowledgement are the extent of the action. Wallet connection
-  // is an explicitly scoped stretch goal (spec.md Out of Scope).
-  alert('Execution is not implemented in this build (FR-027) — wallet connection is a scoped stretch goal. The coherence gate above is the deliverable.');
-});
 </script>
 
 </body>

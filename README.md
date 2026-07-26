@@ -283,6 +283,41 @@ interfaces return identical verdicts by construction, not by discipline. Verifie
 model/pair/reps through both `GET /api/check` and the MCP `coherence_check` tool resolved to the same
 stored baseline and produced the same verdict shape.
 
+### MCP tools (agent-facing)
+
+Three tools, stdio, server name `cohesion` — full schemas in
+[contracts/mcp-tools.md](./specs/001-agent-coherence-guard/contracts/mcp-tools.md). A caller (e.g. Claude
+Code) is never the subject being measured — the `model` argument names the agent under test, which is not
+necessarily the caller itself.
+
+**`coherence_baselines()`** — lists what's already calibrated. Real call, this session:
+```json
+{"baselines": [
+  {"model": "0gm-1.0-35b-a3b", "pair": ["WETH","USDC"], "third": "WBTC",
+   "mean_incoherence": 0.2235, "mean_disagreement_sum": 1.580, "std_dev": 0.1254, "n": 12,
+   "calibrated_at": "2026-07-26T06:13:10Z"},
+  "... 5 more models"
+]}
+```
+
+**`coherence_check(pair, amount, model, reps)`** — the gate. Real call against `0gm-1.0-35b-a3b`, reps=3:
+```json
+{
+  "outcome": "PASS",
+  "reading": {"incoherence": 0.24, "disagreement_sum": 1.567, "ci_low": 1.161, "ci_high": 1.972, "reps": 3},
+  "baseline": {"mean_incoherence": 0.2235, "mean_disagreement_sum": 1.580, "std_dev": 0.1254, "n": 12},
+  "p_value": 0.468, "confidence": 0.95, "requires_acknowledgement": false
+}
+```
+
+**`coherence_calibrate(pair, model, reps)`** — establishes a baseline (27–45 calls, minutes not seconds);
+returns `{"stored": true, "key": ..., "mean_incoherence": ..., "n": ..., "calibrated_at": ...}`, or
+`{"stored": false, "reason": "BASELINE_EXISTS", ...}` if one already exists and `overwrite` isn't set.
+
+The intended agent pattern: *"Before executing any swap, call `coherence_check`. If the outcome is `VETO`
+or `NO_BASELINE`, do not execute — report the verdict and stop."* — an agent vetoing its own trade with no
+human intervening.
+
 ---
 
 ## Sponsor Fit

@@ -4,6 +4,10 @@
       "command": "python3",
       "args": ["-m", "cohesion.mcp_server"],
       "_comment": "Activate .venv first (source .venv/bin/activate) so python3 resolves to the venv with mcp/scipy/etc installed, or point 'command' at .venv/bin/python3 directly."
+    },
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest"]
     }
   }
 }

@@ -20,6 +20,7 @@ from cohesion.orchestrator import (
     quote_event,
     run_calibration,
     run_check,
+    run_check_degraded_demo,
 )
 from cohesion.uniswap import QuoteUnavailable, get_quote
 
@@ -114,4 +115,18 @@ def check(pair: str, amount: float, model: str, prompt_id: str = "default", reps
     pair_t = tuple(pair.split("-"))
     agent_config = AgentConfig(model=model, system_prompt=system_prompt)
     gen = run_check(_cfg, agent_config, pair_t, amount, reps, prompt_id=prompt_id)
+    return StreamingResponse(_stream(gen), media_type="text/event-stream")
+
+
+@app.get("/api/check-degraded-demo")
+def check_degraded_demo(pair: str, amount: float, model: str, prompt_id: str = "default", reps: int = 6):
+    """DEMONSTRATION ONLY -- see orchestrator.run_check_degraded_demo()'s
+    docstring and research.md D11. A distinct route from /api/check,
+    calling a distinct function that the real advisory-gate path never
+    touches, so this endpoint's existence cannot affect a real check."""
+    if not (3 <= reps <= 15):
+        raise HTTPException(status_code=422, detail="reps must be between 3 and 15")
+    pair_t = tuple(pair.split("-"))
+    agent_config = AgentConfig(model=model)
+    gen = run_check_degraded_demo(_cfg, agent_config, pair_t, amount, reps, prompt_id=prompt_id)
     return StreamingResponse(_stream(gen), media_type="text/event-stream")

@@ -136,6 +136,9 @@ def compute_verdict(baseline_obj, reading, trials: list, confidence: float = 0.9
         "std_error": reading.std_error, "ci_low": reading.ci_low, "ci_high": reading.ci_high,
         "reps": reading.reps, "signalling": reading.signalling,
         "samples_used": reading.samples_used, "samples_discarded": reading.samples_discarded,
+        "per_context_disagreement": {
+            f"{ctx[0]},{ctx[1]}": v for ctx, v in reading.per_context_disagreement.items()
+        },
     }
 
     if baseline_obj is None:

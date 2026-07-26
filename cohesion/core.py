@@ -8,7 +8,7 @@ dollar-denominated field anywhere in this module's output.
 Ported from experiments/coherence_ab.py's incoherence_lp/analyse, which
 validated the phenomenon this engine measures.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 from scipy.optimize import linprog
@@ -132,6 +132,10 @@ class CoherenceReading:
     signalling: float
     samples_used: int
     samples_discarded: int
+    # Per-context mean P(X != Y), the three addends that sum to
+    # disagreement_sum -- exposed so the UI can show the arithmetic, not
+    # just the final number. Keyed by context tuple, e.g. ("A", "B").
+    per_context_disagreement: dict = field(default_factory=dict)
 
 
 def analyse(samples_by_context: dict, confidence: float = 0.95) -> CoherenceReading:
@@ -158,7 +162,8 @@ def analyse(samples_by_context: dict, confidence: float = 0.95) -> CoherenceRead
         marginal_by_var.setdefault(y, []).append(mean[0] + mean[2])
 
     signalling = max((max(v) - min(v) for v in marginal_by_var.values()), default=0.0)
-    disagreement_sum = sum(m[(1, 0)] + m[(0, 1)] for m in marginals.values())
+    per_context_disagreement = {ctx: m[(1, 0)] + m[(0, 1)] for ctx, m in marginals.items()}
+    disagreement_sum = sum(per_context_disagreement.values())
     incoherence = incoherence_lp(marginals, domain=True)
     ci = confidence_interval(per_context_disagreement_lists, confidence=confidence)
 
@@ -172,4 +177,5 @@ def analyse(samples_by_context: dict, confidence: float = 0.95) -> CoherenceRead
         signalling=signalling,
         samples_used=sum(len(v) for v in samples_by_context.values()),
         samples_discarded=0,  # caller (orchestrator) overrides with the real discard count
+        per_context_disagreement=per_context_disagreement,
     )

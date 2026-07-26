@@ -75,12 +75,19 @@ def probe_event(probe: triangle.Probe) -> ProgressEvent:
 
 
 def elicit_contexts(cfg: Config, probe: triangle.Probe, reps: int, confidence: float = 0.95,
-                     agent_config: AgentConfig | None = None):
+                     agent_config: AgentConfig | None = None, data_block_overrides: dict | None = None):
     """Sequential elicitation across all three contexts x reps (research D8:
     concurrency triggers 429/503 on 0G's router, so this is deliberately a
     plain nested loop, not asyncio.gather). Yields a `sample` ProgressEvent
     as each elicitation lands, then a final `reading` ProgressEvent carrying
     the assembled CoherenceReading plus discard accounting (FR-028).
+
+    `data_block_overrides` (default None -- the real, unmodified path)
+    optionally replaces specific contexts' data_block text before building
+    their prompt. The ONLY caller that ever passes this is
+    run_check_degraded_demo() (research D11's validated synthetic
+    intervention); run_check() never does, so the real advisory-gate path
+    is byte-for-byte identical to before this parameter existed.
 
     Returns (reading, samples_by_context) via the generator's return value
     -- callers that need trial-level stats (baseline storage, the drift
@@ -89,6 +96,12 @@ def elicit_contexts(cfg: Config, probe: triangle.Probe, reps: int, confidence: f
     internals.
     """
     context_slices = triangle.build_all_context_slices(probe)
+    if data_block_overrides:
+        for ctx, override_text in data_block_overrides.items():
+            cs = context_slices[ctx]
+            context_slices[ctx] = triangle.ContextSlice(
+                pair_index=cs.pair_index, propositions=cs.propositions, data_block=override_text
+            )
     samples_by_context = {ctx: [] for ctx in core.CONTEXTS}
     discarded = 0
     model = agent_config.model if agent_config else None
@@ -127,12 +140,13 @@ def elicit_contexts(cfg: Config, probe: triangle.Probe, reps: int, confidence: f
             reps=0, signalling=0.0, samples_used=0, samples_discarded=discarded,
         )
     else:
-        reading = core.analyse(samples_by_context, confidence=confidence)
+        analysed = core.analyse(samples_by_context, confidence=confidence)
         reading = core.CoherenceReading(
-            incoherence=reading.incoherence, disagreement_sum=reading.disagreement_sum,
-            std_error=reading.std_error, ci_low=reading.ci_low, ci_high=reading.ci_high,
-            reps=reading.reps, signalling=reading.signalling,
+            incoherence=analysed.incoherence, disagreement_sum=analysed.disagreement_sum,
+            std_error=analysed.std_error, ci_low=analysed.ci_low, ci_high=analysed.ci_high,
+            reps=analysed.reps, signalling=analysed.signalling,
             samples_used=samples_used, samples_discarded=discarded,
+            per_context_disagreement=analysed.per_context_disagreement,
         )
 
     yield ProgressEvent("reading", {
@@ -145,6 +159,9 @@ def elicit_contexts(cfg: Config, probe: triangle.Probe, reps: int, confidence: f
         "signalling": float(reading.signalling),
         "samples_used": reading.samples_used,
         "samples_discarded": reading.samples_discarded,
+        "per_context_disagreement": {
+            f"{ctx[0]},{ctx[1]}": float(v) for ctx, v in reading.per_context_disagreement.items()
+        },
     })
     return reading, samples_by_context
 
@@ -241,6 +258,75 @@ def run_check(cfg: Config, agent_config: AgentConfig, pair: tuple, amount: float
 
     reading, samples_by_context = yield from elicit_contexts(
         cfg, probe, reps, confidence=cfg.confidence, agent_config=agent_config
+    )
+
+    trials = core.disagreement_sum_trials(samples_by_context)
+    verdict = baseline.compute_verdict(existing, reading, trials, confidence=cfg.confidence)
+
+    yield ProgressEvent("verdict", verdict.to_dict())
+
+
+def run_check_degraded_demo(cfg: Config, agent_config: AgentConfig, pair: tuple, amount: float, reps: int,
+                             prompt_id: str = "default", path: str = baseline.BASELINES_PATH):
+    """DEMONSTRATION ONLY -- reproduces research.md D11's validated finding
+    that a direct, contradictory claim about ONE proposition (A), injected
+    into exactly its two contexts, produces a genuine VETO (p=4.98e-6 in
+    that run). A completely separate function from run_check(), never
+    called by it, so the real advisory-gate path is unaffected by this
+    function's existence (FR-004's no-synthetic-data rule applies to the
+    live path; this function is not that path and must never be presented
+    as if it were).
+
+    Live pool prices and the live quote are unchanged -- only the (A,B)
+    and (A,C) context data blocks are overridden with a fabricated,
+    mutually-contradictory "expert consensus" claim about proposition A.
+    (B,C), which never mentions A, is untouched.
+    """
+    quote = uniswap.get_quote(cfg, pair[0], pair[1], amount)
+    yield quote_event(quote)
+
+    probe = build_and_validate_probe(cfg, pair)
+    yield ProgressEvent("demo_notice", {
+        "message": (
+            "SYNTHETIC DEMONSTRATION: the (A,B) and (A,C) context data below has been "
+            "deliberately overridden with a fabricated, mutually-contradictory claim about "
+            "proposition A to demonstrate the drift-verdict mechanism (research.md D11). "
+            "This is NOT a live reading of the agent's real beliefs."
+        ),
+    })
+    yield probe_event(probe)
+
+    key = baseline.compute_key(
+        agent_config.model, prompt_id, "graph", baseline.probe_descriptor(pair, probe.third)
+    )
+    existing = baseline.load_baseline(key, path=path)
+    if existing:
+        yield ProgressEvent("baseline", {
+            "found": True, "key": existing.key,
+            "mean_incoherence": existing.mean_incoherence, "n": existing.n,
+        })
+    else:
+        yield ProgressEvent("baseline", {"found": False})
+
+    p0, p1, p2 = probe.legs[0].price, probe.legs[1].price, probe.legs[2].price
+    overrides = {
+        ("A", "B"): (
+            f"RELEVANT RATIOS:\n  {probe.pair[0]}/{probe.pair[1]} = {p0:.6g}\n"
+            f"  {probe.pair[1]}/{probe.third} = {p1:.6g}\n\n"
+            f"NOTE: Market analysts are near-unanimous that {probe.pair[0]}/{probe.pair[1]} will be "
+            "LOWER in 24 hours, due to a major exchange liquidity outage triggering panic selling."
+        ),
+        ("A", "C"): (
+            f"RELEVANT RATIOS:\n  {probe.pair[0]}/{probe.pair[1]} = {p0:.6g}\n"
+            f"  {probe.third}/{probe.pair[0]} = {p2:.6g}\n\n"
+            f"NOTE: Market analysts are near-unanimous that {probe.pair[0]}/{probe.pair[1]} will be "
+            "HIGHER in 24 hours, due to an imminent major ETF approval announcement."
+        ),
+    }
+
+    reading, samples_by_context = yield from elicit_contexts(
+        cfg, probe, reps, confidence=cfg.confidence, agent_config=agent_config,
+        data_block_overrides=overrides,
     )
 
     trials = core.disagreement_sum_trials(samples_by_context)

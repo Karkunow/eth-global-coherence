@@ -79,11 +79,18 @@
   <input id="check-reps" type="range" min="1" max="15" value="3">
 
   <button id="check-btn">Run coherence check</button>
+  <button id="demo-btn" style="background:#fee; border-color:#c55;">Demo: synthetic contradiction (for demonstration only)</button>
   <span class="small" id="check-status"></span>
+
+  <div id="demo-banner" style="display:none; margin-top:0.6rem; padding:0.6rem; border-radius:6px; background:#c55; color:#fff; font-weight:600;">
+    ⚠ SYNTHETIC DEMONSTRATION — context data below is deliberately fabricated to show the drift-verdict mechanism. Not a real reading of the agent's beliefs. See research.md D11.
+  </div>
 
   <div id="check-quote" class="small"></div>
   <div id="check-probe" class="small"></div>
   <div id="check-samples" class="samples" style="display:none"></div>
+
+  <div id="context-breakdown" class="small" style="font-family: ui-monospace, monospace; margin-top:0.4rem;"></div>
 
   <div id="gauge-box" style="display:none; margin-top:1rem;">
     <div class="small">disagreement_sum (perfect coherence = 2.000)</div>
@@ -284,21 +291,28 @@ function unlockExecute() {
   btn.textContent = 'Execute';
 }
 
-async function runCheck() {
-  const btn = document.getElementById('check-btn');
+async function runCheck(endpoint) {
+  endpoint = endpoint || '/api/check';
+  const isDemo = endpoint !== '/api/check';
+  const checkBtn = document.getElementById('check-btn');
+  const demoBtn = document.getElementById('demo-btn');
   const status = document.getElementById('check-status');
   const quoteBox = document.getElementById('check-quote');
   const probeBox = document.getElementById('check-probe');
   const samplesBox = document.getElementById('check-samples');
   const verdictBox = document.getElementById('check-verdict');
+  const demoBanner = document.getElementById('demo-banner');
 
-  btn.disabled = true;
+  checkBtn.disabled = true;
+  demoBtn.disabled = true;
+  demoBanner.style.display = isDemo ? 'block' : 'none';
   lockExecute('Execute — awaiting coherence check');
   quoteBox.textContent = '';
   probeBox.textContent = '';
   samplesBox.style.display = 'block';
   samplesBox.innerHTML = '';
   verdictBox.innerHTML = '';
+  document.getElementById('context-breakdown').textContent = '';
   document.getElementById('gauge-box').style.display = 'none';
   status.textContent = 'Running…';
 
@@ -312,9 +326,12 @@ async function runCheck() {
   let sampleCount = 0;
   let lastReading = null;
   try {
-    const res = await fetch('/api/check?' + params.toString());
+    const res = await fetch(endpoint + '?' + params.toString());
     for await (const { event, data } of parseSSE(res)) {
-      if (event === 'quote') {
+      if (event === 'demo_notice') {
+        demoBanner.style.display = 'block';
+        demoBanner.textContent = '⚠ ' + data.message;
+      } else if (event === 'quote') {
         quoteBox.textContent = `Quote (${data.source}): ${data.amount_in} → ${data.amount_out}  (fee ${data.fee_tier}, gas ~${data.gas_estimate})`;
       } else if (event === 'probe') {
         probeBox.textContent = `Probe: ${data.pair.join('/')} → ${data.third} — product ${data.product.toFixed(4)} (${data.valid ? 'valid' : 'INVALID'})`;
@@ -332,6 +349,11 @@ async function runCheck() {
         status.textContent = `${sampleCount} samples landed…`;
       } else if (event === 'reading') {
         lastReading = data;
+        const pcd = data.per_context_disagreement || {};
+        const parts = Object.entries(pcd).map(([ctx, v]) => `P(${ctx.replace(',', '≠')})=${v.toFixed(3)}`);
+        document.getElementById('context-breakdown').textContent = parts.length
+          ? `${parts.join('  +  ')}  =  ${data.disagreement_sum.toFixed(3)}  (target: 2.000)`
+          : '';
       } else if (event === 'verdict') {
         const outcome = data.outcome;
         renderGauge(data.reading, data.baseline);
@@ -373,11 +395,13 @@ async function runCheck() {
   } catch (e) {
     verdictBox.innerHTML = `<div class="result err">Request failed: ${e}</div>`;
   } finally {
-    btn.disabled = false;
+    checkBtn.disabled = false;
+    demoBtn.disabled = false;
   }
 }
 
-document.getElementById('check-btn').addEventListener('click', runCheck);
+document.getElementById('check-btn').addEventListener('click', () => runCheck('/api/check'));
+document.getElementById('demo-btn').addEventListener('click', () => runCheck('/api/check-degraded-demo'));
 document.getElementById('execute-btn').addEventListener('click', () => {
   // No execute/submit/sign path exists in this scope (FR-027) -- the gate
   // and its acknowledgement are the extent of the action. Wallet connection

@@ -24,6 +24,11 @@
   .health-figure { font-size: 2.2rem; font-weight: 700; }
   .overwrite-prompt { margin-top: 0.8rem; padding: 0.8rem; border-radius: 6px; background: #fa02; }
   .small { font-size: 0.85rem; color: #888; }
+  .explain-card { border: 1px solid #8884; border-radius: 8px; padding: 1rem; margin: 1.5rem 0; background: #8881; }
+  .explain-card h2 { margin: 0 0 0.4rem; font-size: 1rem; }
+  .explain-card p { margin: 0.4rem 0; }
+  .explain-card .ctx-row { font-family: ui-monospace, monospace; margin: 0.3rem 0; }
+  .explain-card .ctx-tag { display: inline-block; min-width: 3.5rem; font-weight: 600; }
 </style>
 </head>
 <body>
@@ -31,11 +36,44 @@
 <h1>Cohesion</h1>
 <p class="tagline">Does your agent's reasoning hold together?</p>
 
+<div class="explain-card">
+  <h2>The three propositions</h2>
+  <div class="ctx-row"><strong>A</strong> = WETH/USDC ends higher in 24h</div>
+  <div class="ctx-row"><strong>B</strong> = USDC/WBTC ends higher in 24h</div>
+  <div class="ctx-row"><strong>C</strong> = WBTC/WETH ends higher in 24h</div>
+  <p>
+    The agent is asked about them in three separate, isolated calls, e.g. context <strong>(A,B)</strong>
+    is only asked about A and B, blind to the third proposition. This forms partial probability
+    distributions.
+  </p>
+  <p>
+    After that we're using an expectation value for a full (A,B,C) distribution, which should
+    equal exactly <strong>2.0</strong> ideally, as a measure of the coherence of the model the
+    agent is using.
+  </p>
+</div>
+
 <fieldset id="calibrate-panel">
   <legend>Calibrate an agent's health baseline</legend>
 
   <label for="model">Model (subject under test)</label>
-  <input id="model" value="deepseek-v4-flash">
+  <select id="model">
+    <option value="deepseek-v4-flash" selected>deepseek-v4-flash</option>
+    <option value="deepseek-v4-pro">deepseek-v4-pro</option>
+    <option value="0gm-1.0-35b-a3b">0gm-1.0-35b-a3b (0G in-house)</option>
+    <option value="0gm-1.0-35b-a3b-sia">0gm-1.0-35b-a3b-sia (0G in-house)</option>
+    <option value="glm-5">glm-5</option>
+    <option value="glm-5.1">glm-5.1</option>
+    <option value="glm-5.2">glm-5.2</option>
+    <option value="qwen3.6-plus">qwen3.6-plus</option>
+    <option value="qwen3.7-plus">qwen3.7-plus</option>
+    <option value="qwen3.7-max">qwen3.7-max</option>
+    <option value="qwen3-vl-30b">qwen3-vl-30b</option>
+    <option value="kimi-k2.7-code">kimi-k2.7-code</option>
+    <option value="minimax-m3">minimax-m3</option>
+    <option value="hy3">hy3</option>
+  </select>
+  <div class="small">Only models with a healthy provider on 0G's router are listed.</div>
 
   <label for="system-prompt">System prompt (optional)</label>
   <input id="system-prompt" placeholder="Leave empty for none">
@@ -46,7 +84,7 @@
   </select>
 
   <label for="reps">Repetitions per context: <span id="reps-value">12</span></label>
-  <input id="reps" type="range" min="9" max="15" value="12">
+  <input id="reps" type="range" min="3" max="15" value="12">
 
   <button id="calibrate-btn">Run calibration</button>
   <span class="small" id="calibrate-status"></span>
@@ -65,7 +103,11 @@
   <legend>Trade — advisory coherence gate</legend>
 
   <label for="check-model">Model (subject under test)</label>
-  <input id="check-model" value="deepseek-v4-flash">
+  <select id="check-model">
+    <option value="" disabled selected>Loading calibrated models…</option>
+  </select>
+  <div class="small">Only models with a stored baseline are listed — calibrate a model above
+    before it can be checked.</div>
 
   <label for="check-pair">Trading pair</label>
   <select id="check-pair">
@@ -73,7 +115,7 @@
   </select>
 
   <label for="check-amount">Amount in</label>
-  <input id="check-amount" type="number" value="1.0" step="0.1" min="0">
+  <input id="check-amount" type="number" value="0.001" step="0.001" min="0">
 
   <label for="check-reps">Repetitions per context: <span id="check-reps-value">3</span></label>
   <input id="check-reps" type="range" min="1" max="15" value="3">
@@ -93,7 +135,7 @@
   <div id="context-breakdown" class="small" style="font-family: ui-monospace, monospace; margin-top:0.4rem;"></div>
 
   <div id="gauge-box" style="display:none; margin-top:1rem;">
-    <div class="small">disagreement_sum (perfect coherence = 2.000)</div>
+    <div class="small">disagreement_sum (perfect coherence = 2.0)</div>
     <div style="position:relative; height:28px; background:#8882; border-radius:4px; margin-top:0.3rem;">
       <div id="gauge-baseline-band" style="position:absolute; top:0; bottom:0; background:#88f4; border-radius:4px;"></div>
       <div id="gauge-ci-band" style="position:absolute; top:6px; bottom:6px; background:#8888;"></div>
@@ -122,9 +164,20 @@ repsInput.addEventListener('input', () => repsValue.textContent = repsInput.valu
 
 async function loadBaselines() {
   const box = document.getElementById('baselines-list');
+  const checkModelSelect = document.getElementById('check-model');
   try {
     const res = await fetch('/api/baselines');
     const { baselines } = await res.json();
+
+    const prevSelected = checkModelSelect.value;
+    const models = [...new Set(baselines.map(b => b.model))].sort();
+    if (models.length === 0) {
+      checkModelSelect.innerHTML = '<option value="" disabled selected>No calibrated models yet — calibrate one above</option>';
+    } else {
+      checkModelSelect.innerHTML = models.map(m => `<option value="${m}">${m}</option>`).join('');
+      checkModelSelect.value = models.includes(prevSelected) ? prevSelected : models[0];
+    }
+
     if (baselines.length === 0) {
       box.textContent = 'None yet — run a calibration above.';
       return;
@@ -215,7 +268,7 @@ async function runCalibration(overwrite) {
       } else if (event === 'stored') {
         resultBox.innerHTML = `<div class="result ok">
           <div class="health-figure">${(data.mean_incoherence * 100).toFixed(1)}% incoherence</div>
-          <div class="small">n=${data.n} · disagreement_sum mean ${data.mean_disagreement_sum.toFixed(3)} (must be 2.000 for perfect coherence) · std_dev ${data.std_dev.toFixed(4)}</div>
+          <div class="small">n=${data.n} · disagreement_sum mean ${data.mean_disagreement_sum.toFixed(3)} (must be 2.0 for perfect coherence) · std_dev ${data.std_dev.toFixed(4)}</div>
         </div>`;
         status.textContent = 'Baseline stored.';
         loadBaselines();
@@ -276,7 +329,7 @@ function renderGauge(reading, baselineData) {
     `observed ${reading.disagreement_sum.toFixed(3)}` +
     (reading.ci_low !== null ? ` [${reading.ci_low.toFixed(3)}, ${reading.ci_high.toFixed(3)}]` : ' (no CI — reps<3)') +
     (baselineData ? ` · baseline ${baselineData.mean_disagreement_sum.toFixed(3)} ± ${baselineData.std_dev.toFixed(3)}` : ' · no baseline') +
-    ' · green mark = 2.000 (perfect coherence)';
+    ' · green mark = 2.0 (perfect coherence)';
 }
 
 function lockExecute(label) {
@@ -332,7 +385,14 @@ async function runCheck(endpoint) {
         demoBanner.style.display = 'block';
         demoBanner.textContent = '⚠ ' + data.message;
       } else if (event === 'quote') {
-        quoteBox.textContent = `Quote (${data.source}): ${data.amount_in} → ${data.amount_out}  (fee ${data.fee_tier}, gas ~${data.gas_estimate})`;
+        const DECIMALS = { WETH: 18, USDC: 6, WBTC: 8, USDT: 6, DAI: 18 };
+        const toHuman = (raw, symbol) => {
+          const d = DECIMALS[symbol] ?? 18;
+          return (Number(raw) / 10 ** d).toLocaleString(undefined, { maximumFractionDigits: 6 });
+        };
+        const amtIn = toHuman(data.amount_in, data.token_in);
+        const amtOut = toHuman(data.amount_out, data.token_out);
+        quoteBox.textContent = `Quote (${data.source}): ${amtIn} ${data.token_in} → ${amtOut} ${data.token_out}  (fee ${data.fee_tier}, gas ~${data.gas_estimate})`;
       } else if (event === 'probe') {
         probeBox.textContent = `Probe: ${data.pair.join('/')} → ${data.third} — product ${data.product.toFixed(4)} (${data.valid ? 'valid' : 'INVALID'})`;
       } else if (event === 'baseline') {
@@ -352,7 +412,7 @@ async function runCheck(endpoint) {
         const pcd = data.per_context_disagreement || {};
         const parts = Object.entries(pcd).map(([ctx, v]) => `P(${ctx.replace(',', '≠')})=${v.toFixed(3)}`);
         document.getElementById('context-breakdown').textContent = parts.length
-          ? `${parts.join('  +  ')}  =  ${data.disagreement_sum.toFixed(3)}  (target: 2.000)`
+          ? `${parts.join('  +  ')}  =  ${data.disagreement_sum.toFixed(3)}  (target: 2.0)`
           : '';
       } else if (event === 'verdict') {
         const outcome = data.outcome;

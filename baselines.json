@@ -1,17 +1,62 @@
 {
   "65867fc2c3990cfd6d2415ebd6c97630f2aebf7f89097792c5e0424d7dbb10f5": {
-    "calibrated_at": "2026-07-26T03:20:30Z",
+    "calibrated_at": "2026-07-26T04:21:14Z",
     "key": "65867fc2c3990cfd6d2415ebd6c97630f2aebf7f89097792c5e0424d7dbb10f5",
-    "mean_disagreement_sum": 1.4841666666666669,
-    "mean_incoherence": 0.26750000000000007,
+    "mean_disagreement_sum": 1.5022222222222223,
+    "mean_incoherence": 0.2533333333333333,
     "model": "deepseek-v4-flash",
+    "n": 9,
+    "pair": [
+      "WETH",
+      "USDC"
+    ],
+    "prompt_id": "default",
+    "std_dev": 0.03767551518485775,
+    "third": "WBTC"
+  },
+  "6fac6b93229e2b1e4b99efb6bd827363e2cecb1ee4cf031017e277b66269bff1": {
+    "calibrated_at": "2026-07-26T05:06:18Z",
+    "key": "6fac6b93229e2b1e4b99efb6bd827363e2cecb1ee4cf031017e277b66269bff1",
+    "mean_disagreement_sum": 1.5372222222222223,
+    "mean_incoherence": 0.23916666666666675,
+    "model": "0gm-1.0-35b-a3b",
+    "n": 9,
+    "pair": [
+      "WETH",
+      "USDC"
+    ],
+    "prompt_id": "default",
+    "std_dev": 0.19822826348541842,
+    "third": "WBTC"
+  },
+  "94e6156de15e0529b51ad04654b6c13e68e7e60ae7f9fb99b936669151521a8d": {
+    "calibrated_at": "2026-07-26T05:13:20Z",
+    "key": "94e6156de15e0529b51ad04654b6c13e68e7e60ae7f9fb99b936669151521a8d",
+    "mean_disagreement_sum": 1.2625,
+    "mean_incoherence": 0.3999999999999999,
+    "model": "qwen3-vl-30b",
     "n": 12,
     "pair": [
       "WETH",
       "USDC"
     ],
     "prompt_id": "default",
-    "std_dev": 0.07936776690976272,
+    "std_dev": 0.06440285143320336,
+    "third": "WBTC"
+  },
+  "a32afd1429d47dfb4e7454a5338863accbd9b248ec4ea09c88956923eb3ef813": {
+    "calibrated_at": "2026-07-26T05:01:08Z",
+    "key": "a32afd1429d47dfb4e7454a5338863accbd9b248ec4ea09c88956923eb3ef813",
+    "mean_disagreement_sum": 1.4400000000000002,
+    "mean_incoherence": 0.2844444444444445,
+    "model": "deepseek-v4-pro",
+    "n": 9,
+    "pair": [
+      "WETH",
+      "USDC"
+    ],
+    "prompt_id": "default",
+    "std_dev": 0.1330413469565007,
     "third": "WBTC"
   }
 }

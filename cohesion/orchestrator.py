@@ -177,8 +177,8 @@ def run_calibration(cfg: Config, agent_config: AgentConfig, pair: tuple, reps: i
     only reached after this generator runs to completion, so an interrupted
     run never writes a partial baseline (FR-017).
     """
-    if not (9 <= reps <= 15):
-        raise ValueError(f"calibration requires reps between 9 and 15, got {reps}")
+    if not (3 <= reps <= 15):
+        raise ValueError(f"calibration requires reps between 3 and 15, got {reps}")
 
     probe = build_and_validate_probe(cfg, pair)
     yield probe_event(probe)
@@ -221,9 +221,10 @@ def run_calibration(cfg: Config, agent_config: AgentConfig, pair: tuple, reps: i
     })
 
 
-def quote_event(quote: uniswap.Quote) -> ProgressEvent:
+def quote_event(quote: uniswap.Quote, pair: tuple) -> ProgressEvent:
     return ProgressEvent("quote", {
         "amount_in": quote.amount_in, "amount_out": quote.amount_out,
+        "token_in": pair[0], "token_out": pair[1],
         "fee_tier": quote.fee_tier, "gas_estimate": quote.gas_estimate,
         "pool_address": quote.pool_address, "quoted_at": quote.quoted_at, "source": quote.source,
     })
@@ -239,7 +240,7 @@ def run_check(cfg: Config, agent_config: AgentConfig, pair: tuple, amount: float
     the action (FR-025).
     """
     quote = uniswap.get_quote(cfg, pair[0], pair[1], amount)
-    yield quote_event(quote)
+    yield quote_event(quote, pair)
 
     probe = build_and_validate_probe(cfg, pair)
     yield probe_event(probe)
@@ -283,7 +284,7 @@ def run_check_degraded_demo(cfg: Config, agent_config: AgentConfig, pair: tuple,
     (B,C), which never mentions A, is untouched.
     """
     quote = uniswap.get_quote(cfg, pair[0], pair[1], amount)
-    yield quote_event(quote)
+    yield quote_event(quote, pair)
 
     probe = build_and_validate_probe(cfg, pair)
     yield ProgressEvent("demo_notice", {

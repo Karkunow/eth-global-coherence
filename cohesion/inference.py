@@ -69,6 +69,13 @@ def _request(cfg: Config, prompt: str, max_tokens: int, tries: int, request_time
                    "max_tokens": max_tokens, "temperature": 1.0}
         if model.startswith("deepseek-"):
             payload["enable_thinking"] = False
+        elif model.startswith("0gm-"):
+            # Qwen-tokenizer models take the flag nested, not top-level --
+            # confirmed live: reasoning_tokens dropped from max_tokens to 0
+            # and finish_reason flipped "length" -> "stop" (0gm-1.0-35b-a3b
+            # has thinking on by default and otherwise burns the whole
+            # budget on reasoning_content, leaving content: null).
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {cfg.zg_api_key}",
                    "User-Agent": "curl/8.4.0"}
 
@@ -98,7 +105,11 @@ def _extract_content(data: dict, is_claude: bool) -> str:
     if is_claude:
         blocks = data.get("content", [])
         return "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
-    return data["choices"][0]["message"]["content"]
+    # content is None when a reasoning model burns its whole max_tokens
+    # budget on hidden reasoning_content (finish_reason: "length") -- treat
+    # as empty so _parse_distribution discards this one sample rather than
+    # the whole run crashing on a single bad response.
+    return data["choices"][0]["message"]["content"] or ""
 
 
 def _extract_attestation(model: str, data: dict, headers: dict) -> Attestation:

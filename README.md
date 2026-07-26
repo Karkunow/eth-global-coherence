@@ -258,11 +258,35 @@ experiments/          # day-one validation runs (first hours of the event)
 
 ## Running It
 
+### Prerequisites — this needs real credentials, not just a clone
+
+`cohesion/config.py` loads `.env` and refuses to start if anything's missing (`RuntimeError` naming every
+missing var) — there is deliberately no partial/degraded mode, per the no-mocked-data posture above. Four
+keys need to be obtained and filled into `.env` before anything works; everything else in `.env.example` is
+already a correct, working default and shouldn't be changed.
+
+| Variable | Get it from | Notes |
+|---|---|---|
+| `GRAPH_API_KEY` | [thegraph.com/studio/apikeys](https://thegraph.com/studio/apikeys/) | Self-serve, instant. Free tier (100k queries/month) is plenty. |
+| `UNISWAP_API_KEY` | Uniswap Developer Platform dashboard | Self-serve; issuance latency has varied. Required for the primary quote path — QuoterV2 is only a fallback. |
+| `ETH_RPC_URL` | Any RPC provider (e.g. Alchemy free tier) | Only exercised if the Trading API is unreachable and it falls back to QuoterV2. |
+| `ZG_API_KEY` | [pc.0g.ai](https://pc.0g.ai) mainnet portal, **after depositing real 0G tokens into a ledger** | The slow one — budget real time for the token purchase/deposit before the key becomes usable. Must be a general-purpose key from the main "Create key" flow, not the per-provider "Advanced" flow (that issues an app-scoped key that 401s against the shared router). |
+
+**Don't change `ZG_MODEL`** from the shipped default (`deepseek-v4-flash`) without re-reading the comment
+block above it in `.env.example` — most other 0G-hosted models were tested and ruled out for this project:
+several sit behind an unhealthy provider (`BALANCE_INSUFFICIENT` regardless of funding), and reasoning models
+like `glm-5.2` burn their entire token budget on hidden `reasoning_content` and never emit a parseable answer
+unless `enable_thinking: false` is honored — which only `deepseek-v4-flash` does reliably (see `research.md`
+D10 for the full investigation).
+
+Without all four keys correctly set, nothing runs — not the dashboard, not the MCP server, not the CLI
+entry points. There is no cached/offline demo mode.
+
 ```bash
-cp .env.example .env    # GRAPH_API_KEY, UNISWAP_API_KEY, ZG_API_KEY, ETH_RPC_URL
+cp .env.example .env    # fill in GRAPH_API_KEY, UNISWAP_API_KEY, ETH_RPC_URL, ZG_API_KEY
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-pytest tests/unit -v    # 20/20, pure math + baseline logic, no network needed
+pytest tests/unit -v    # 20/20, pure math + baseline logic, no network needed — works without .env
 uvicorn cohesion.server:app --port 8000
 ```
 

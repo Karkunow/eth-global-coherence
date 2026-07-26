@@ -70,8 +70,8 @@ async def calibrate(request: Request):
     reps = int(body.get("reps", 12))
     overwrite = bool(body.get("overwrite", False))
 
-    if not (9 <= reps <= 15):
-        raise HTTPException(status_code=422, detail="reps must be between 9 and 15 for calibration (FR-016)")
+    if not (3 <= reps <= 15):
+        raise HTTPException(status_code=422, detail="reps must be between 3 and 15 for calibration")
 
     agent_config = AgentConfig(model=model, system_prompt=body.get("system_prompt"))
     gen = run_calibration(_cfg, agent_config, pair, reps, prompt_id=prompt_id, overwrite=overwrite)
@@ -104,7 +104,7 @@ def quote(pair: str, amount: float):
         q = get_quote(_cfg, x, y, amount)
     except QuoteUnavailable as e:
         raise HTTPException(status_code=503, detail={"error": "QUOTE_UNAVAILABLE", "detail": str(e)}) from e
-    return quote_event(q).data
+    return quote_event(q, (x, y)).data
 
 
 @app.get("/api/check")

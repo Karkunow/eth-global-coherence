@@ -61,6 +61,48 @@
   <div id="calibrate-result"></div>
 </fieldset>
 
+<fieldset id="check-panel">
+  <legend>Trade — advisory coherence gate</legend>
+
+  <label for="check-model">Model (subject under test)</label>
+  <input id="check-model" value="deepseek-v4-flash">
+
+  <label for="check-pair">Trading pair</label>
+  <select id="check-pair">
+    <option value="WETH-USDC" selected>WETH-USDC</option>
+  </select>
+
+  <label for="check-amount">Amount in</label>
+  <input id="check-amount" type="number" value="1.0" step="0.1" min="0">
+
+  <label for="check-reps">Repetitions per context: <span id="check-reps-value">3</span></label>
+  <input id="check-reps" type="range" min="1" max="15" value="3">
+
+  <button id="check-btn">Run coherence check</button>
+  <span class="small" id="check-status"></span>
+
+  <div id="check-quote" class="small"></div>
+  <div id="check-probe" class="small"></div>
+  <div id="check-samples" class="samples" style="display:none"></div>
+
+  <div id="gauge-box" style="display:none; margin-top:1rem;">
+    <div class="small">disagreement_sum (perfect coherence = 2.000)</div>
+    <div style="position:relative; height:28px; background:#8882; border-radius:4px; margin-top:0.3rem;">
+      <div id="gauge-baseline-band" style="position:absolute; top:0; bottom:0; background:#88f4; border-radius:4px;"></div>
+      <div id="gauge-ci-band" style="position:absolute; top:6px; bottom:6px; background:#8888;"></div>
+      <div id="gauge-point" style="position:absolute; top:0; bottom:0; width:2px; background:#000;"></div>
+      <div id="gauge-mark-2" style="position:absolute; top:0; bottom:0; width:2px; background:#0a0; right:0;"></div>
+    </div>
+    <div class="small" id="gauge-legend"></div>
+  </div>
+
+  <div id="check-verdict"></div>
+
+  <div style="margin-top:1rem;">
+    <button id="execute-btn" disabled>Execute — awaiting coherence check</button>
+  </div>
+</fieldset>
+
 <fieldset>
   <legend>Stored baselines</legend>
   <div id="baselines-list" class="small">Loading…</div>
@@ -186,6 +228,162 @@ async function runCalibration(overwrite) {
 
 document.getElementById('calibrate-btn').addEventListener('click', () => runCalibration(false));
 document.getElementById('overwrite-btn').addEventListener('click', () => runCalibration(true));
+
+const checkRepsInput = document.getElementById('check-reps');
+const checkRepsValue = document.getElementById('check-reps-value');
+checkRepsInput.addEventListener('input', () => checkRepsValue.textContent = checkRepsInput.value);
+
+function renderGauge(reading, baselineData) {
+  const box = document.getElementById('gauge-box');
+  box.style.display = 'block';
+  // Scale: 1.0 (max incoherence, all mass on 2 possible disagreements... use
+  // a fixed display range [1.0, 2.0] since disagreement_sum can't exceed 2.0
+  // and rarely drops near 1.0 for a merely-drifted (not adversarial) agent.
+  const lo = 1.0, hi = 2.0;
+  const pct = v => Math.max(0, Math.min(100, ((v - lo) / (hi - lo)) * 100));
+
+  const point = document.getElementById('gauge-point');
+  point.style.left = pct(reading.disagreement_sum) + '%';
+
+  const ciBand = document.getElementById('gauge-ci-band');
+  if (reading.ci_low !== null && reading.ci_high !== null) {
+    ciBand.style.display = 'block';
+    ciBand.style.left = pct(reading.ci_low) + '%';
+    ciBand.style.width = (pct(reading.ci_high) - pct(reading.ci_low)) + '%';
+  } else {
+    ciBand.style.display = 'none';
+  }
+
+  const baselineBand = document.getElementById('gauge-baseline-band');
+  if (baselineData) {
+    const bLo = baselineData.mean_disagreement_sum - baselineData.std_dev;
+    const bHi = baselineData.mean_disagreement_sum + baselineData.std_dev;
+    baselineBand.style.display = 'block';
+    baselineBand.style.left = pct(bLo) + '%';
+    baselineBand.style.width = (pct(bHi) - pct(bLo)) + '%';
+  } else {
+    baselineBand.style.display = 'none';
+  }
+
+  document.getElementById('gauge-legend').textContent =
+    `observed ${reading.disagreement_sum.toFixed(3)}` +
+    (reading.ci_low !== null ? ` [${reading.ci_low.toFixed(3)}, ${reading.ci_high.toFixed(3)}]` : ' (no CI — reps<3)') +
+    (baselineData ? ` · baseline ${baselineData.mean_disagreement_sum.toFixed(3)} ± ${baselineData.std_dev.toFixed(3)}` : ' · no baseline') +
+    ' · green mark = 2.000 (perfect coherence)';
+}
+
+function lockExecute(label) {
+  const btn = document.getElementById('execute-btn');
+  btn.disabled = true;
+  btn.textContent = label;
+}
+
+function unlockExecute() {
+  const btn = document.getElementById('execute-btn');
+  btn.disabled = false;
+  btn.textContent = 'Execute';
+}
+
+async function runCheck() {
+  const btn = document.getElementById('check-btn');
+  const status = document.getElementById('check-status');
+  const quoteBox = document.getElementById('check-quote');
+  const probeBox = document.getElementById('check-probe');
+  const samplesBox = document.getElementById('check-samples');
+  const verdictBox = document.getElementById('check-verdict');
+
+  btn.disabled = true;
+  lockExecute('Execute — awaiting coherence check');
+  quoteBox.textContent = '';
+  probeBox.textContent = '';
+  samplesBox.style.display = 'block';
+  samplesBox.innerHTML = '';
+  verdictBox.innerHTML = '';
+  document.getElementById('gauge-box').style.display = 'none';
+  status.textContent = 'Running…';
+
+  const params = new URLSearchParams({
+    pair: document.getElementById('check-pair').value,
+    amount: document.getElementById('check-amount').value,
+    model: document.getElementById('check-model').value,
+    reps: document.getElementById('check-reps').value,
+  });
+
+  let sampleCount = 0;
+  let lastReading = null;
+  try {
+    const res = await fetch('/api/check?' + params.toString());
+    for await (const { event, data } of parseSSE(res)) {
+      if (event === 'quote') {
+        quoteBox.textContent = `Quote (${data.source}): ${data.amount_in} → ${data.amount_out}  (fee ${data.fee_tier}, gas ~${data.gas_estimate})`;
+      } else if (event === 'probe') {
+        probeBox.textContent = `Probe: ${data.pair.join('/')} → ${data.third} — product ${data.product.toFixed(4)} (${data.valid ? 'valid' : 'INVALID'})`;
+      } else if (event === 'baseline') {
+        status.textContent = data.found ? `Comparing against baseline (n=${data.n})…` : 'No baseline for this configuration — reading will be provisional.';
+      } else if (event === 'sample') {
+        sampleCount++;
+        const row = document.createElement('div');
+        row.className = 'sample-row' + (data.used ? '' : ' discarded');
+        row.textContent = `[${data.context}] rep ${data.rep}: ` +
+          (data.used ? `P(X≠Y)=${data.disagreement.toFixed(3)}  attestation: ${data.attestation.model_reported} (${data.attestation.verifiability})`
+                     : 'discarded — unparseable response');
+        samplesBox.appendChild(row);
+        samplesBox.scrollTop = samplesBox.scrollHeight;
+        status.textContent = `${sampleCount} samples landed…`;
+      } else if (event === 'reading') {
+        lastReading = data;
+      } else if (event === 'verdict') {
+        const outcome = data.outcome;
+        renderGauge(data.reading, data.baseline);
+        if (outcome === 'PASS') {
+          verdictBox.innerHTML = `<div class="result ok">
+            <b>PASS</b> — confidence ${(data.confidence * 100).toFixed(0)}%, reps ${data.reading.reps}
+            ${data.note ? `<div class="small">${data.note}</div>` : ''}
+          </div>`;
+          unlockExecute();
+        } else {
+          const label = outcome === 'VETO' ? 'VETO — reasoning has drifted from baseline'
+                      : outcome === 'NO_BASELINE' ? 'NO BASELINE — calibrate this configuration first'
+                      : 'INSUFFICIENT SAMPLES — provisional reading, not statistically confident';
+          const explain = outcome === 'VETO'
+            ? 'This means the agent\'s answers across isolated contexts no longer glue into a consistent picture as well as they used to — it does NOT mean this trade is unprofitable.'
+            : outcome === 'NO_BASELINE'
+            ? 'No prior calibration exists for this exact model/prompt/pair — run a calibration above first.'
+            : 'Fewer than 3 repetitions per context were used, so no confidence interval could be computed.';
+          verdictBox.innerHTML = `<div class="result warn">
+            <b>${label}</b> — confidence ${(data.confidence * 100).toFixed(0)}%, reps ${data.reading.reps}
+            <div class="small">${explain}</div>
+            <label style="margin-top:0.5rem; display:flex; align-items:center; gap:0.4rem;">
+              <input type="checkbox" id="ack-checkbox"> I understand this warning and want to proceed anyway.
+            </label>
+          </div>`;
+          lockExecute(`Execute — ${outcome}, acknowledge warning above to proceed`);
+          document.getElementById('ack-checkbox').addEventListener('change', (e) => {
+            if (e.target.checked) unlockExecute();
+            else lockExecute(`Execute — ${outcome}, acknowledge warning above to proceed`);
+          });
+        }
+      } else if (event === 'error') {
+        verdictBox.innerHTML = `<div class="result err"><b>${data.error}</b>: ${data.detail}</div>`;
+        status.textContent = 'Failed.';
+      } else if (event === 'done') {
+        status.textContent += ` (${(data.elapsed_ms / 1000).toFixed(1)}s total)`;
+      }
+    }
+  } catch (e) {
+    verdictBox.innerHTML = `<div class="result err">Request failed: ${e}</div>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+document.getElementById('check-btn').addEventListener('click', runCheck);
+document.getElementById('execute-btn').addEventListener('click', () => {
+  // No execute/submit/sign path exists in this scope (FR-027) -- the gate
+  // and its acknowledgement are the extent of the action. Wallet connection
+  // is an explicitly scoped stretch goal (spec.md Out of Scope).
+  alert('Execution is not implemented in this build (FR-027) — wallet connection is a scoped stretch goal. The coherence gate above is the deliverable.');
+});
 </script>
 
 </body>

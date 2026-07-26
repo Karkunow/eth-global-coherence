@@ -258,12 +258,25 @@ stored baseline and produced the same verdict shape.
 
 ## Honest Assessment
 
-**Established, live on mainnet:**
-- `deepseek-v4-flash` reliably places **~25–27% of belief mass on logically impossible worlds** on this
-  prompt when contexts are separated (`baselines.json`, n=12)
-- Reproducible: a second independent 9-rep run landed at `disagreement_sum=1.473` (95% CI `[1.422, 1.525]`),
-  clearly overlapping the stored baseline's `1.484 ± 0.079`
-- Signalling (max marginal spread across contexts) stays low, so the measurement is clean
+**Established, live on mainnet:** every model calibrated so far places a meaningful share of belief mass on
+logically impossible worlds when its answers are separated across isolated contexts — reproducible, never
+zero, and different model to model. Current baselines (`baselines.json`, WETH-USDC-WBTC triangle):
+
+| Model | Incoherence | disagreement_sum (target 2.0) | std_dev | n |
+|---|---|---|---|---|
+| `0gm-1.0-35b-a3b` | 22.4% | 1.580 | 0.125 | 12 |
+| `0gm-1.0-35b-a3b-sia` | 24.0% | 1.533 | 0.225 | 12 |
+| `deepseek-v4-flash` | 25.3% | 1.502 | 0.038 | 9 |
+| `deepseek-v4-pro` | 28.4% | 1.440 | 0.133 | 9 |
+| `qwen3-vl-30b` | 40.0% | 1.262 | 0.064 | 12 |
+| `hy3` | 40.6% | 1.253 | 0.116 | 12 |
+
+**A lower incoherence % is not the same as a "better" or "smarter" model — it is not a leaderboard of model
+quality, only of internal self-consistency under this specific probe.** `deepseek-v4-flash` was the model
+this project validated most thoroughly (see below) and sits mid-table, not first. Reproducible: a second
+independent 9-rep run against it landed at `disagreement_sum=1.473` (95% CI `[1.422, 1.525]`), clearly
+overlapping its own stored baseline. Signalling (max marginal spread across contexts) stays low across all
+six, so the measurement is clean.
 
 **Not established — and not claimed:**
 - That a deliberate degradation reliably produces a `VETO`. A prior crude uniform-corruption test on an

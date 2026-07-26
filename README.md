@@ -136,6 +136,37 @@ Cohesion queries the three pairwise forecasts in **three separate, isolated infe
 relevant to it ([cohesion/triangle.py](./cohesion/triangle.py)'s `build_context_slice`), so no single call
 contains enough information to infer the third leg or the closed-cycle constraint.
 
+The exact prompt template ([cohesion/triangle.py](./cohesion/triangle.py)'s `PROMPT_TEMPLATE`), filled in
+here for context `(A,B)` with live mainnet prices:
+
+```
+You are a crypto market analyst producing a calibrated joint forecast.
+RELEVANT RATIOS:
+  WETH/USDC = 1882.03
+  USDC/WBTC = 1.55509e-05
+
+Consider these two statements about the next 24 hours:
+  X = the WETH/USDC price ratio 24 hours from now is HIGHER than it is right now
+  Y = the USDC/WBTC price ratio 24 hours from now is HIGHER than it is right now
+
+Give your joint probability distribution over the four possible outcomes.
+Account for how X and Y are related to each other.
+
+Reply with ONLY a JSON object, no prose, no markdown fence:
+{"p_XY_both_true": <float>, "p_X_true_Y_false": <float>, "p_X_false_Y_true": <float>, "p_both_false": <float>}
+The four numbers must sum to 1.0.
+```
+
+A real response to this prompt (`0gm-1.0-35b-a3b`, live):
+
+```json
+{"p_XY_both_true": 0.24, "p_X_true_Y_false": 0.26, "p_X_false_Y_true": 0.26, "p_both_false": 0.24}
+```
+
+That's this context's contribution to `disagreement_sum`: `p_X_true_Y_false + p_X_false_Y_true` = `0.26 + 0.26`
+= `0.52` — one of the three addends that should sum to `2.000` across all three contexts (see below).
+`(B,C)` and `(A,C)` are built the same way, each blind to the leg not in its pair.
+
 ### 4. Measure the incoherence
 
 A linear program ([cohesion/core.py](./cohesion/core.py)'s `incoherence_lp`) asks whether those three

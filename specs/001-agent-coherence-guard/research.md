@@ -218,7 +218,7 @@ rep 2: P(X≠Y)=0.45
 
 ---
 
-## D11. Attempted degradation demo: two honest attempts, two negative results
+## D11. Attempted degradation demo: two negative results, then a real reproduction
 
 **[Attempted 2026-07-26, post-launch.]** Tried to reproduce a live `VETO` against `deepseek-v4-flash`'s
 real calibrated baseline (`mean_disagreement_sum=1.484, std_dev=0.079, n=12`), per O5's mandate to validate
@@ -239,15 +239,33 @@ trials `[1.68, 1.42, 1.54]` straddling the baseline rather than consistently bel
 more statistical power (same intervention): `PASS`, `p=0.356` — *weaker*, not stronger, with a trial mean
 (`1.535`) landing slightly *closer* to perfect coherence than the baseline, not further from it.
 
-**Conclusion: does not reproduce, dropped per the project's own stated rule** ("if it does not reproduce,
-drop the claim rather than weaken the confidence bar" — see O5 and the README's Honest Assessment section).
-Two independent, real, live interventions against the actual shipped model — not a simulation — both failed
-to produce a significant drift signal, one of them the specific mechanism theory predicted should work. This
-does not mean the drift test itself is broken (the decision rule is unit-tested at all 5 boundaries,
-including a synthetic VETO case, in `tests/unit/test_baseline.py`) — it means `deepseek-v4-flash` on this
-particular prompt is more robust to these two specific interventions than expected, or a stronger/different
-intervention is needed. No degraded-input demo mode is implemented in the shipped app as a result — this was
-a standalone experiment (see the pattern in `experiments/`), never wired into `cohesion/`.
+Both of the above failed to produce a significant drift signal. Consistent with the project's own rule ("if
+it does not reproduce, drop the claim rather than weaken the confidence bar"), neither was shipped or forced
+— but the *mechanism itself* wasn't yet ruled out, only these two specific implementations of it.
+
+**Attempt 3 — direct contradiction on the shared variable itself, not surrounding narrative.** Attempt 2
+injected different color/narrative into *different legs*' data; it never made the model's stated belief
+about one *specific* proposition context-dependent. Each proposition (A, B, or C) appears in exactly two of
+the three contexts (A appears in `(A,B)` and `(A,C)`). This attempt injected a direct, contradictory "expert
+consensus" claim about **A specifically** into each of *its* two contexts — context `(A,B)` told "market
+analysts are near-unanimous WETH/USDC falls," context `(A,C)` told "near-unanimous it rises" — leaving
+`(B,C)`, which never mentions A, untouched. Run at reps=6:
+
+- Context `(A,B)`: model's stated `P(A=up) ≈ 0.10`
+- Context `(A,C)`: model's stated `P(A=up) ≈ 0.85`, for the identical real-world proposition
+- `signalling = 0.758` (the max-marginal-spread-across-contexts diagnostic, built into `core.analyse()`
+  from the start precisely for this) — versus a typical `~0.02–0.03` on an untouched run
+- trials `[1.18, 1.04, 1.00, 1.20, 1.13, 1.20]`, mean `1.125`, against baseline `1.484 ± 0.079`
+- **`VETO`, `p = 4.98×10⁻⁶`** — not a borderline result
+
+**Conclusion.** Attempts 1 and 2 failed for a design reason, not a fundamental one: they biased *surrounding
+information* without ever making the model's belief about one specific proposition genuinely
+context-dependent. Attempt 3 targets exactly what `signalling` was built to detect — a coherent forecaster's
+marginal `P(A)` cannot depend on which isolated conversation asked, and directly contradicting the shared
+variable (not the neighboring legs) is what breaks it, cleanly and reproducibly. This is a real, live,
+non-rigged result — the confidence bar was never touched; the intervention got sharper instead. **Still not
+wired into the shipped app as a UI-toggleable "degraded mode"** — this remains a standalone experiment (same
+pattern as `experiments/`), a deliberate scope decision, not a limitation of the finding.
 
 ---
 
@@ -259,7 +277,7 @@ a standalone experiment (see the pattern in `experiments/`), never wired into `c
 | O2 | Provider account funded, testnet ledger opens and accepts inference | **PARTIALLY RESOLVED** ⚠️ | Auth, endpoint, and prompt parsing all confirmed on testnet (got past 401 to a real completion). **But see O6 — the testnet model itself is unusable**, so this account will not be the one used for the subject model in the final build. |
 | O3 | Provider rate limits under calibration load | **RESOLVED** ⚠️ — worse than expected | 5-way concurrency → `503`; ~1 req/s serial → `429`. Revised to sequential + backoff (D8). Calibration (27–45 calls) will take noticeably longer than originally assumed; no longer treated as "probably fine," must be timed for real once the mainnet model is selected. |
 | O4 | Hosted trading API key | **RESOLVED** ✅ | Key obtained 2026-07-26. Trading API is now the primary quote path (D5), unlocking the $7k track. Store as `UNISWAP_API_KEY` in `.env`. **Carries three hard qualification requirements — `FEEDBACK.md`, the feedback-form submission linking to it, and a README pointing at the integration lines.** |
-| O5 | Whether a deliberate degradation reliably produces a veto (SC-007) | **RESOLVED — does not reproduce, claim dropped** ❌ | See D11. Two real live attempts against `deepseek-v4-flash`'s actual baseline (uniform mood randomization; asymmetric per-context fabricated narratives, the theoretically-motivated mechanism) both returned `PASS`, one at reps=3 and again at reps=6 for more power. Per the project's own rule, the claim is dropped rather than the confidence bar weakened. No degraded-input mode ships in `cohesion/`. |
+| O5 | Whether a deliberate degradation reliably produces a veto (SC-007) | **RESOLVED ✅ — reproduces, on the third design** | See D11. First two attempts (uniform mood randomization; asymmetric per-leg narratives) returned `PASS` against `deepseek-v4-flash`'s real baseline. Third attempt — a direct contradictory claim about one *specific* proposition (A) injected into exactly its two contexts, leaving the third untouched — produced `VETO` at `p=4.98e-6`, `signalling=0.758` vs typical `~0.02-0.03`. Confidence bar was never touched; the intervention got sharper instead. Standalone experiment, not wired into `cohesion/` as a shipped feature. |
 | O6 | Subject model produces genuine sampling variance | **RESOLVED ✅** | See D10. `qwen2.5-omni` (testnet) and `glm-5.2` (mainnet, runaway reasoning) both ruled out; the Claude/gpt-5.6-luna provider on mainnet is broken infrastructure-side. `deepseek-v4-flash` confirmed working: `enable_thinking=false` honored, real variance (`sd=0.05`, n=3), 6.4s total. This is now `ZG_MODEL`. |
 
 ---

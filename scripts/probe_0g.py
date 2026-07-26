@@ -39,7 +39,7 @@ import urllib.request
 
 DEFAULT_API_BASE = "https://router-api.0g.ai/v1"
 DEFAULT_RPC = "https://evmrpc.0g.ai"
-DEFAULT_MODEL = "claude-opus-4-8"
+DEFAULT_MODEL = "claude-sonnet-5"  # cheapest Claude on 0G mainnet; test here before Opus
 
 # The real production prompt shape (persona + explicit correlation instruction +
 # live-style market data). This is deliberate: an earlier, more abstract prompt
@@ -84,8 +84,17 @@ def rpc(url, method, params):
 
 def call(api_base, key, model, text, temp=1.0, extra=None, tries=3):
     """One elicitation with backoff. Returns (parsed_dict_or_None, error_str_or_None, headers, raw_body)."""
-    payload = {"model": model, "messages": [{"role": "user", "content": text}],
-               "max_tokens": 150, "temperature": temp}
+    payload = {"model": model, "messages": [{"role": "user", "content": text}], "max_tokens": 150}
+    # Claude Sonnet 5 / Opus 4.8 do not list temperature/top_p in their
+    # supported_parameters on 0G's /v1/models (verified 2026-07-26) — they use
+    # thinking: {type: "adaptive"} instead, matching real Anthropic API
+    # behavior. Sending temperature to them is unverified (silent ignore vs
+    # 400) and unnecessary: the CLI cross-check already showed real variance
+    # from Claude with no temperature override at all. Only force temperature
+    # for non-Claude models (qwen, deepseek, gpt-*, glm, kimi, ...), where the
+    # OpenAI-compatible surface is the documented one.
+    if not model.startswith("claude-"):
+        payload["temperature"] = temp
     if extra:
         payload.update(extra)
     body = json.dumps(payload).encode()

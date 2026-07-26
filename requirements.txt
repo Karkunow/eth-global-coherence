@@ -1,0 +1,9 @@
+scipy
+numpy
+fastapi
+uvicorn[standard]
+httpx
+web3
+openai
+mcp
+pytest

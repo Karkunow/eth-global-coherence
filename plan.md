@@ -47,8 +47,9 @@ elicitation loop (`ask`) all work and are reusable.
 Uniswap quote, and the **Execute button is gated by the coherence guard** — the system auto-constructs a
 probe triangle around the swap pair, elicits the agent's beliefs in isolated contexts, and either passes the
 trade or vetoes it when the agent has drifted off its calibrated baseline. Same engine exposed as an MCP server; second
-demo beat shows Claude Code (with Uniswap's own MCP tooling + our `coherence_check` MCP enabled) vetoing its
-own swap mid-conversation.
+demo beat shows Claude Code — with our own MCP server providing both `get_swap_quote` and
+`coherence_check` — vetoing its own swap mid-conversation. (Uniswap ships no MCP server; `uniswap-ai` is
+coding skills, not runtime tooling.)
 
 **Framing note (this resolved the demo's weakest point):** the triangle is NOT the trade. The trade is an
 ordinary swap anyone makes; the triangle is *instrumentation built around it* — the guard picks a third
@@ -60,7 +61,7 @@ enforceable by arithmetic. If a judge asks "who trades a 1:1 loop?" — nobody; 
 | Sponsor | Track | How it is load-bearing |
 |---|---|---|
 | **The Graph** | Best AI Tooling ($5k) | Live Uniswap v3 subgraph defines the triangle constraint; shipped as a reusable MCP server, which is exactly what the track asks for ("guardrail or auditor layer", "not a single end-user app") |
-| **Uniswap** | Best API Integration ($7k) → fallback Stack Contribution ($3k) | The triangle *is* a real 3-leg swap cycle; QuoterV2 gives the executable quote that gets vetoed |
+| **Uniswap** | **Best API Integration ($7k)** — key in hand | Trading API supplies the executable quote the guard gates, using an official Developer Platform key. Official `uniswap-ai` skills installed and used during the build. |
 | **0G** | Best Infrastructure & Tooling ($4.5k) | Every context elicitation runs on 0G Compute; the certificate bundles TEE-attested responses. Their track literally lists "Verification, guardrail, or auditor layer for on-chain agent actions" as an example |
 
 **The pitch:** 0G attestation proves *who spoke*. We prove *what they said is possible*.
@@ -78,13 +79,19 @@ enforceable by arithmetic. If a judge asks "who trades a 1:1 loop?" — nobody; 
    **Saves 30–90 min of exchange-withdrawal wait and ~$20.**
    Still unproven: that the ledger opens and a provider accepts the funds. Prove it with one
    end-to-end attested call before building on it.
-2. **Register for a Uniswap Developer Platform API key** at https://developers.uniswap.org/dashboard.
-   Issuance latency is unverified. If it arrives we target the $7k track; if not, the $3k track.
+2. ~~**Register for a Uniswap Developer Platform API key**~~ — **RESOLVED, key obtained.**
+   Targeting the **$7k API Integration track**. Store as `UNISWAP_API_KEY` in `.env`.
+   ⚠️ **Three hard qualification requirements, all documentation, all easy to lose to the clock:**
+   (a) `FEEDBACK.md` in the repo; (b) a submission to
+   https://developers.uniswap.org/hackathon-feedback that **links to** that FEEDBACK.md;
+   (c) a README pointing at the exact lines implementing the integration.
+   Missing any of these sends the submission to audit before winners are finalized.
 3. **Get The Graph API key** at https://thegraph.com/studio/apikeys/ (self-serve, instant, 100k free
    queries/month).
 
-All keys go in `.env` (already gitignored): `GRAPH_API_KEY`, `ZG_API_KEY`, `ETH_RPC_URL` (Alchemy free tier),
-optionally `UNISWAP_API_KEY`. Never hardcode them — the repo goes public for judging.
+All keys go in `.env` (gitignored). **`cp .env.example .env`** — the template is committed and documents
+every variable: `GRAPH_API_KEY`, `UNISWAP_API_KEY` (required for the $7k track), `ZG_API_KEY`, `ZG_RPC_URL`
+(testnet), `ETH_RPC_URL` (fallback quoter only). Never hardcode them — the repo goes public for judging.
 
 ---
 
@@ -94,7 +101,7 @@ optionally `UNISWAP_API_KEY`. Never hardcode them — the repo goes public for j
 coherence/
   core.py          # LP incoherence + analyse        <- extracted verbatim from coherence_ab.py
   graph_client.py  # Uniswap v3 subgraph queries     <- The Graph
-  uniswap.py       # QuoterV2 staticCall             <- Uniswap
+  uniswap.py       # Trading API quote (QuoterV2 fallback)  <- Uniswap
   inference.py     # 0G Compute Router client        <- 0G
   triangle.py      # swap route -> 3 propositions + prompts
   baseline.py      # calibrate / load / drift verdict
@@ -301,11 +308,12 @@ propositions, and the per-context prompt builder (porting `market_block`'s leak 
 `coherence_ab.py:58-73` to Graph-sourced pool data). This table + CI are the demo's punchline; build them
 early.
 
-### 3. Uniswap (~45 min) → commit `feat(uniswap): QuoterV2 route quotes`
-`uniswap.py`. QuoterV2 `quoteExactInputSingle` via `staticCall` (mandatory — the Quoter reverts to return
-data) on an Alchemy free RPC key. Quote each of the three legs for a fixed notional, producing the concrete
-swap the guard will veto. Try the Trading API `POST /v1/quote` if the key arrived; otherwise the Quoter
-contract alone satisfies the Stack Contribution track.
+### 3. Uniswap (~45 min) → commit `feat(uniswap): Trading API quotes`
+`uniswap.py`. **Trading API is the primary path** — key is in hand, and it is what the $7k track requires.
+Invoke the installed `swap-integration` skill while writing this: it documents the request body shape,
+permit2 field rules, null-field handling, and quote-freshness constraints that are otherwise easy to get
+wrong. Keep the QuoterV2 `staticCall` path as a fallback (the Quoter is non-`view` and reverts to return
+data — the static call is mandatory). Read-only either way; nothing is ever transmitted (FR-027).
 
 ### 4. Server + dashboard (~2h) → **three commits**: `feat(server): SSE run endpoint`, then
 `feat(web): gauge + verdict` (the punchline — commit it working before anything else), then
@@ -346,10 +354,12 @@ the 0G-hosted subject under test and defaults to a fixed 0G model. **Stretch onl
 purer but bypasses 0G and depends on unverified client support; build only if Step 6 lands early, never as
 the default. This is what makes the Graph AI Tooling submission qualify as
 *reusable tooling* rather than a single app. Include a `SKILL.md`. Then the **agent demo config** (~15 min,
-part of this step): register our MCP + Uniswap's own MCP tooling (github.com/Uniswap/uniswap-ai, linked from
-their prize page) in Claude Code, instruct the agent to always call `coherence_check` before any swap tool,
-and capture the veto happening mid-conversation — this clip is the centerpiece of the P2 story and the
-strongest possible evidence of reusability for The Graph's AI Tooling track.
+part of this step): **correction — Uniswap ships no MCP server.** `uniswap-ai` is Claude Code skills and
+plugins (coding guidance), not runtime tooling, so there is nothing of theirs to register alongside ours.
+Instead add a small `get_swap_quote` tool to our own MCP server (~20 lines, wrapping `uniswap.py`) so the
+calling agent has both quoting and checking from one first-party server. The demo beat is unchanged: the
+agent quotes a swap, calls `coherence_check`, is vetoed, and abandons the trade of its own accord — the
+strongest evidence of reusability for The Graph's AI Tooling track.
 
 ### DEFERRED DECISION — PASS/VETO demo ladder (revisit after Step 4 or 5)
 Deliberately not scheduled: the three-mode demo ladder (honest PASS via different model/system-prompt under

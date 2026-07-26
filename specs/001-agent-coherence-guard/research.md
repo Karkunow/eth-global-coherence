@@ -78,15 +78,30 @@ An earlier revision of this document concluded from that fact that **testnet was
 
 ---
 
-## D5. Contract quoter over the hosted trading API
+## D5. Trading API as primary quote source, contract quoter as fallback
 
-**Decision**: Obtain the executable quote by calling the on-chain quoter contract via a public RPC.
+**REVISED 2026-07-26** — an earlier revision made the contract quoter primary because API-key issuance latency was unverified. **The key is now in hand**, which reverses the decision.
 
-**Rationale**: No API key, no signup, no approval latency. The hosted trading API requires a key whose issuance time is unverified — an unbounded dependency on a fixed clock.
+**Decision**: Obtain the executable quote from the hosted Trading API using the developer-platform key. Keep the on-chain quoter as a fallback path that ships regardless.
 
-**[verified] implementation hazard**: the quoter is non-`view` by design and reverts to return its data. It **must** be invoked as a static call. This is the single most common integration error with it and will present as an inexplicable revert if missed.
+**Rationale**:
+1. The official `swap-integration` skill (installed from `Uniswap/uniswap-ai`, commit `55e16f6`) lists the Trading API as **integration method #1** and documents the parts that are easy to get wrong — request body shape, permit2 field rules, null-field handling, quote freshness, pre-broadcast validation.
+2. The sponsor's **$7k API-integration track explicitly requires** "a valid API key from the Uniswap Developer Platform" for core functionality. The contract-quoter path qualifies only for the smaller stack-contribution track.
+3. It returns full route structure, not just an output amount — a better quote object to display beside a gated action.
 
-**Alternatives considered**: hosted trading API — kept as an opportunistic upgrade if a key arrives in time, since it would strengthen the integration story, but not on the critical path.
+**Hard qualification requirements** for that track, which are documentation tasks rather than code and are therefore easy to lose to the clock:
+- A public repository with open-source code.
+- **A `FEEDBACK.md` file in the repository.**
+- **A completed Uniswap Developer Feedback Form submission** (`developers.uniswap.org/hackathon-feedback`) that links to that `FEEDBACK.md`.
+- A README pointing explicitly at the lines implementing the integration, so a reviewer can verify it.
+
+Submissions missing these are audited before winners are finalized. Treat them as build steps, not paperwork.
+
+**[verified] fallback hazard**: if the contract quoter is used, it is non-`view` by design and reverts to return its data — it **must** be invoked as a static call. This is the most common way to lose an hour on it, and presents as an inexplicable revert.
+
+**[unverified]**: Trading API testnet support. Evidence points to mainnet-only. Since no transaction is ever transmitted (FR-027), a mainnet quote is fine — it is read-only and the gate never executes.
+
+**Alternatives considered**: Universal Router SDK — richer, but TypeScript-oriented and unnecessary when nothing is executed.
 
 ---
 
@@ -141,7 +156,7 @@ Integration is the opposite case. FR-004 forbids substituting synthetic data any
 | O1 | Router exposes per-response attestation signature | **[unverified]** | Capture available verifiability metadata; sidecar only if time permits; never imply attestation that is absent |
 | O2 | Provider account funded | **RESOLVED** ✅ | 10.0 0G verified on Galileo testnet (chain 16602) vs a 4-token minimum. Target testnet; no mainnet purchase needed. Ledger-open and provider-acceptance remain unproven until Scenario 4 runs. |
 | O3 | Provider rate limits under calibration load | **[unverified]** | Semaphore-bounded concurrency; calibration exempt from the 45s budget |
-| O4 | Hosted trading API key issuance latency | **[unverified]** | Not on critical path; contract quoter ships regardless |
+| O4 | Hosted trading API key | **RESOLVED** ✅ | Key obtained 2026-07-26. Trading API is now the primary quote path (D5), unlocking the $7k track. Store as `UNISWAP_API_KEY` in `.env`. **Carries three hard qualification requirements — `FEEDBACK.md`, the feedback-form submission linking to it, and a README pointing at the integration lines.** |
 | O5 | Whether a deliberate degradation reliably produces a veto (SC-007) | **[unverified]** | Must be validated once before being demonstrated. A prior crude uniform-corruption test moved the metric the *wrong* way (0.28×), so the degradation must be **asymmetric** — different premises to different contexts — which breaks gluing mechanically rather than hopefully. If it does not reproduce, drop the claim rather than weaken the confidence bar. |
 
 ---

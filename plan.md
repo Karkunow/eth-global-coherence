@@ -69,10 +69,15 @@ enforceable by arithmetic. If a judge asks "who trades a 1:1 loop?" — nobody; 
 
 ## Do These First (async, before writing any code — all three are humans-or-clocks-gated)
 
-1. **Buy 0G on an exchange** (~$20), withdraw to your wallet. 30–90 min of waiting — start the clock now.
-   Also post in the 0G Discord `#compute` channel asking for testnet tokens as a free backup.
-   (Testnet is NOT an alternative: verified that the 3 0G ledger + 1 0G provider minimums are contract-level
-   and identical on testnet, vs. a 0.1 0G/day faucet.)
+1. ~~**Buy 0G on an exchange**~~ — **RESOLVED, no purchase needed.** Verified on-chain 2026-07-26:
+   **10.0 0G on Galileo testnet** (chain 16602, `evmrpc-testnet.0g.ai`) against a 4 0G minimum
+   (3 ledger + 1 provider). Mainnet balance is 0 — **target testnet**.
+   *Correction:* an earlier note here claimed testnet was ruled out because the minimums are
+   contract-level and identical there. The minimums claim was right; the conclusion was wrong —
+   it assumed the 0.1/day faucet was the only funding route. A grant-funded balance breaks that.
+   **Saves 30–90 min of exchange-withdrawal wait and ~$20.**
+   Still unproven: that the ledger opens and a provider accepts the funds. Prove it with one
+   end-to-end attested call before building on it.
 2. **Register for a Uniswap Developer Platform API key** at https://developers.uniswap.org/dashboard.
    Issuance latency is unverified. If it arrives we target the $7k track; if not, the $3k track.
 3. **Get The Graph API key** at https://thegraph.com/studio/apikeys/ (self-serve, instant, 100k free

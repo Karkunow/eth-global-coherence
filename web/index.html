@@ -1,8 +1,192 @@
 <!doctype html>
-<html>
-<head><meta charset="utf-8"><title>Cohesion</title></head>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cohesion</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: -apple-system, system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+  h1 { margin-bottom: 0; }
+  .tagline { color: #888; margin-top: 0.2rem; }
+  fieldset { border: 1px solid #8884; border-radius: 8px; padding: 1rem; margin: 1.5rem 0; }
+  legend { font-weight: 600; padding: 0 0.5rem; }
+  label { display: block; margin: 0.6rem 0 0.2rem; font-size: 0.9rem; }
+  input, select { width: 100%; padding: 0.4rem; box-sizing: border-box; font-size: 1rem; }
+  button { padding: 0.6rem 1.2rem; font-size: 1rem; cursor: pointer; margin-top: 1rem; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .samples { font-family: ui-monospace, monospace; font-size: 0.85rem; max-height: 240px; overflow-y: auto; background: #8881; border-radius: 6px; padding: 0.5rem; margin-top: 0.8rem; }
+  .sample-row { padding: 0.15rem 0; }
+  .sample-row.discarded { color: #c55; }
+  .result { margin-top: 1rem; padding: 1rem; border-radius: 8px; }
+  .result.ok { background: #2a82; }
+  .result.warn { background: #c822; }
+  .result.err { background: #c552; }
+  .health-figure { font-size: 2.2rem; font-weight: 700; }
+  .overwrite-prompt { margin-top: 0.8rem; padding: 0.8rem; border-radius: 6px; background: #fa02; }
+  .small { font-size: 0.85rem; color: #888; }
+</style>
+</head>
 <body>
+
 <h1>Cohesion</h1>
-<p>Dashboard under construction (T018).</p>
+<p class="tagline">Does your agent's reasoning hold together?</p>
+
+<fieldset id="calibrate-panel">
+  <legend>Calibrate an agent's health baseline</legend>
+
+  <label for="model">Model (subject under test)</label>
+  <input id="model" value="deepseek-v4-flash">
+
+  <label for="system-prompt">System prompt (optional)</label>
+  <input id="system-prompt" placeholder="Leave empty for none">
+
+  <label for="pair">Trading pair</label>
+  <select id="pair">
+    <option value="WETH-USDC" selected>WETH-USDC</option>
+  </select>
+
+  <label for="reps">Repetitions per context: <span id="reps-value">12</span></label>
+  <input id="reps" type="range" min="9" max="15" value="12">
+
+  <button id="calibrate-btn">Run calibration</button>
+  <span class="small" id="calibrate-status"></span>
+
+  <div id="overwrite-box" class="overwrite-prompt" style="display:none">
+    A baseline already exists for this configuration (calibrated <span id="existing-date"></span>, n=<span id="existing-n"></span>).
+    <button id="overwrite-btn">Overwrite it</button>
+  </div>
+
+  <div id="probe-info" class="small"></div>
+  <div id="samples" class="samples" style="display:none"></div>
+  <div id="calibrate-result"></div>
+</fieldset>
+
+<fieldset>
+  <legend>Stored baselines</legend>
+  <div id="baselines-list" class="small">Loading…</div>
+</fieldset>
+
+<script>
+const repsInput = document.getElementById('reps');
+const repsValue = document.getElementById('reps-value');
+repsInput.addEventListener('input', () => repsValue.textContent = repsInput.value);
+
+async function loadBaselines() {
+  const box = document.getElementById('baselines-list');
+  try {
+    const res = await fetch('/api/baselines');
+    const { baselines } = await res.json();
+    if (baselines.length === 0) {
+      box.textContent = 'None yet — run a calibration above.';
+      return;
+    }
+    box.innerHTML = baselines.map(b =>
+      `<div>${b.model} / ${b.prompt_id} / ${b.pair.join('-')}→${b.third} — ` +
+      `<b>${(b.mean_incoherence * 100).toFixed(1)}% incoherence</b> ` +
+      `(n=${b.n}, calibrated ${b.calibrated_at})</div>`
+    ).join('');
+  } catch (e) {
+    box.textContent = 'Could not load baselines: ' + e;
+  }
+}
+loadBaselines();
+
+async function* parseSSE(response) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let idx;
+    while ((idx = buf.indexOf('\n\n')) !== -1) {
+      const chunk = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      const lines = chunk.split('\n');
+      let event = 'message', data = '';
+      for (const line of lines) {
+        if (line.startsWith('event: ')) event = line.slice(7);
+        else if (line.startsWith('data: ')) data += line.slice(6);
+      }
+      if (data) yield { event, data: JSON.parse(data) };
+    }
+  }
+}
+
+async function runCalibration(overwrite) {
+  const btn = document.getElementById('calibrate-btn');
+  const status = document.getElementById('calibrate-status');
+  const probeInfo = document.getElementById('probe-info');
+  const samplesBox = document.getElementById('samples');
+  const resultBox = document.getElementById('calibrate-result');
+  const overwriteBox = document.getElementById('overwrite-box');
+
+  btn.disabled = true;
+  overwriteBox.style.display = 'none';
+  resultBox.innerHTML = '';
+  samplesBox.style.display = 'block';
+  samplesBox.innerHTML = '';
+  status.textContent = 'Running…';
+
+  const body = {
+    pair: document.getElementById('pair').value,
+    model: document.getElementById('model').value,
+    reps: parseInt(document.getElementById('reps').value, 10),
+    overwrite: !!overwrite,
+  };
+  const sp = document.getElementById('system-prompt').value.trim();
+  if (sp) body.system_prompt = sp;
+
+  let sampleCount = 0;
+  try {
+    const res = await fetch('/api/calibrate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    for await (const { event, data } of parseSSE(res)) {
+      if (event === 'probe') {
+        probeInfo.textContent = `Probe: ${data.pair.join('/')} → ${data.third} — product ${data.product.toFixed(4)} (${data.valid ? 'valid' : 'INVALID'})`;
+      } else if (event === 'exists') {
+        document.getElementById('existing-date').textContent = data.calibrated_at;
+        document.getElementById('existing-n').textContent = data.n;
+        overwriteBox.style.display = 'block';
+        status.textContent = 'Baseline already exists.';
+        btn.disabled = false;
+        return;
+      } else if (event === 'sample') {
+        sampleCount++;
+        const row = document.createElement('div');
+        row.className = 'sample-row' + (data.used ? '' : ' discarded');
+        row.textContent = `[${data.context}] rep ${data.rep}: ` +
+          (data.used ? `P(X≠Y)=${data.disagreement.toFixed(3)}  attestation: ${data.attestation.model_reported} (${data.attestation.verifiability})`
+                     : 'discarded — unparseable response');
+        samplesBox.appendChild(row);
+        samplesBox.scrollTop = samplesBox.scrollHeight;
+        status.textContent = `${sampleCount} samples landed…`;
+      } else if (event === 'stored') {
+        resultBox.innerHTML = `<div class="result ok">
+          <div class="health-figure">${(data.mean_incoherence * 100).toFixed(1)}% incoherence</div>
+          <div class="small">n=${data.n} · disagreement_sum mean ${data.mean_disagreement_sum.toFixed(3)} (must be 2.000 for perfect coherence) · std_dev ${data.std_dev.toFixed(4)}</div>
+        </div>`;
+        status.textContent = 'Baseline stored.';
+        loadBaselines();
+      } else if (event === 'error') {
+        resultBox.innerHTML = `<div class="result err"><b>${data.error}</b>: ${data.detail}</div>`;
+        status.textContent = 'Failed.';
+      } else if (event === 'done') {
+        status.textContent += ` (${(data.elapsed_ms / 1000).toFixed(1)}s total)`;
+      }
+    }
+  } catch (e) {
+    resultBox.innerHTML = `<div class="result err">Request failed: ${e}</div>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+document.getElementById('calibrate-btn').addEventListener('click', () => runCalibration(false));
+document.getElementById('overwrite-btn').addEventListener('click', () => runCalibration(true));
+</script>
+
 </body>
 </html>

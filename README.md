@@ -29,13 +29,13 @@ flowchart TB
 
     TRI["triangle.py<br/>probe construction,<br/>leak-safe per-context prompts"]
     CORE["core.py<br/>Incoherence Calculation,<br/>t-distribution confidence interval"]
-    BASE["baseline.py<br/>baselines.json<br/>drift verdict (Welch's t-test)"]
+    BASE["baseline.py<br/>baselines.json<br/>Healthcheck (Welch's t-test)"]
     ORCH --> TRI
     ORCH --> CORE
     ORCH --> BASE
 
     GRAPH[["The Graph<br/>Uniswap v3 subgraph<br/>live pool prices, TVL"]]
-    ZG[["0G Compute Router<br/>3 isolated belief elicitations<br/>+ attestation metadata"]]
+    ZG[["0G Compute Router<br/>3 isolated belief queries<br/>+ attestation metadata"]]
     UNI[["Uniswap Trading API<br/>quote + swap calldata<br/>QuoterV2 fallback"]]
 
     TRI -->|live prices, per-leg| GRAPH
@@ -60,7 +60,7 @@ flowchart TB
 
 **The Graph** (purple) supplies every live price the probe triangle is built from — never mocked. **Uniswap**
 (pink) turns the check into a real, quotable, optionally-signable trade. **0G Compute** (teal) runs every
-belief elicitation the whole measurement depends on. Detail on each integration, with file/line pointers, is
+belief query the whole measurement depends on. Detail on each integration, with file/line pointers, is
 in [How It's Made](#how-its-made) below.
 
 ---
@@ -125,7 +125,7 @@ calibrated normal, not against the theoretical ideal.
 
 ### 3. Ask in isolation
 
-Cohesion elicits the three pairwise forecasts in **three separate, isolated inference calls** — a fresh
+Cohesion queries the three pairwise forecasts in **three separate, isolated inference calls** — a fresh
 0G Compute request per context, never a shared conversation. Each context is shown only the two ratios
 relevant to it ([cohesion/triangle.py](./cohesion/triangle.py)'s `build_context_slice`), so no single call
 contains enough information to infer the third leg or the closed-cycle constraint.
@@ -194,7 +194,7 @@ non-view by design and reverts to return its data) as a live fallback. See
 API alternates unpredictably between a classic-route response and a completely differently-shaped
 UniswapX/Dutch-auction order response for the same request, unless `protocols: ["V3"]` is set.
 
-**0G Compute** ([cohesion/inference.py](./cohesion/inference.py)) runs every belief elicitation, sequentially
+**0G Compute** ([cohesion/inference.py](./cohesion/inference.py)) runs every belief query, sequentially
 with exponential backoff — 5-way concurrency triggers `503`s and ~1 req/s serial triggers `429`s on 0G's
 router, so this is deliberately a plain loop, not `asyncio.gather`. Each response's attestation metadata
 (provider address, response ID, verifiability) is captured and surfaced per-sample in the UI, honestly
@@ -212,7 +212,7 @@ produced real sampling variance end to end (see `research.md`'s D10 for the full
 
 ### Hacky bits worth mentioning
 
-1. **Process-isolated elicitation, not conversation discipline.** The measurement only means anything if the
+1. **Process-isolated querying, not conversation discipline.** The measurement only means anything if the
    agent genuinely cannot see its other answers. Each of the three contexts is a fully independent inference
    call, never a shared conversation — instructing a single conversation to "answer independently" would be
    unverifiable.
@@ -246,7 +246,7 @@ stored baseline and produced the same verdict shape.
 |---|---|---|
 | **The Graph** | Best AI Tooling | Live Uniswap v3 subgraph defines the triangle constraint; shipped as a reusable MCP server ("guardrail or auditor layer", not a single app) |
 | **Uniswap** | Best API Integration | Trading API is the primary executable-quote path for the gated swap, with QuoterV2 as a live fallback; see [FEEDBACK.md](./FEEDBACK.md) |
-| **0G** | Best Infrastructure & Tooling | Every elicitation runs on 0G Compute; attestation metadata is captured and honestly labelled per-sample |
+| **0G** | Best Infrastructure & Tooling | Every query runs on 0G Compute; attestation metadata is captured and honestly labelled per-sample |
 
 ---
 

@@ -2,6 +2,8 @@
 # so .claude/skills/ (the Spec Kit workflow prompts) is deliberately tracked.
 # Only machine-local state is ignored.
 .claude/settings.local.json
+.playwright-mcp-config.local.json
+.playwright-mcp/
 .env
 *.pyc
 __pycache__/

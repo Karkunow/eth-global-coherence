@@ -6,6 +6,12 @@
 
 **Team:** Iaroslav Karkunov — Telegram [@wknvw](https://t.me/wknvw) · X [@apocnab](https://x.com/apocnab)
 
+**Live demo:** [https://94-130-105-233.nip.io/](https://94-130-105-233.nip.io/) — the six models already
+calibrated in [baselines.json](./baselines.json) work out of the box for PASS/VETO checks. Calibrating a
+*new* model on this shared instance requires your own funded 0G mainnet account and 0G API key (get one at
+[pc.0g.ai](https://pc.0g.ai) after depositing 0G tokens) — paste it into the "Your own 0G API key" field at
+the top of the page, since this deployment's own key is deliberately not spendable by every visitor.
+
 ---
 
 ## Architecture

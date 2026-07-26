@@ -82,7 +82,7 @@ event: error        data: { error: "PROBE_INVALID", detail: "...", product: 1.04
 **Ordering guarantees**: `probe` and `quote` always precede any `sample`. `verdict` always follows `reading`. `sample` events may interleave across contexts in any order — they are concurrent by design (research D8) and carry their own `context` and `rep` labels.
 
 **Client obligations**
-- Keep the execute affordance unavailable until `verdict` arrives, then honour `gate_open` (FR-024, FR-025).
+- Display the verdict before the user commits (FR-024). When `requires_acknowledgement` is true, demand an explicit click-through — but **never disable the action**; the system advises, it does not block (FR-025).
 - Display `confidence` and `reps` alongside the verdict (FR-022).
 - Handle null `ci_low`/`ci_high` when reps < 3.
 
@@ -130,6 +130,8 @@ Lists stored baselines for display.
 
 ---
 
-## Non-endpoints
+## Non-endpoints (this scope)
 
-There is **no** execute, submit, sign, or broadcast endpoint, and none may be added. The gate governs a UI affordance; nothing reaches a network. (FR-027)
+There is **no** execute, submit, sign, or broadcast endpoint. Nothing reaches a network (FR-027) — the verdict and its acknowledgement are the extent of the action.
+
+**Reserved for the stretch**: when wallet connection and execution land, a `POST /api/execute` will appear, and it will be reachable only after a `requires_acknowledgement` verdict has been acknowledged. The advisory model is what makes that safe to add later without redesign — the client already distinguishes "warned and proceeding" from "proceeding freely".

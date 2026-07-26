@@ -142,23 +142,23 @@ The decision. Returned identically by both interfaces (FR-030).
 | `p_value` | float \| null | From the two-sample test |
 | `confidence` | float | The level applied; 0.95 by default |
 | `note` | string \| null | E.g. the better-than-baseline notice (FR-023) |
-| `gate_open` | bool | True only on `PASS` |
+| `requires_acknowledgement` | bool | True on `VETO`, `NO_BASELINE`, `INSUFFICIENT_SAMPLES`; false on `PASS` |
 
 **Decision rule** (FR-019 through FR-023):
 
 ```
-if no baseline for config_key      → NO_BASELINE          (gate_open = false)
-elif reps < 3                      → INSUFFICIENT_SAMPLES (gate_open = false)
-elif reading significantly WORSE   → VETO                 (gate_open = false)
-elif reading significantly BETTER  → PASS + note          (gate_open = true)
-else                               → PASS                 (gate_open = true)
+if no baseline for config_key      → NO_BASELINE          (acknowledge required)
+elif reps < 3                      → INSUFFICIENT_SAMPLES (acknowledge required)
+elif reading significantly WORSE   → VETO                 (acknowledge required)
+elif reading significantly BETTER  → PASS + note          (proceed freely)
+else                               → PASS                 (proceed freely)
 ```
 
 "Significantly" is a one-sided Welch's t-test at `confidence`. Comparison is against the **stored baseline**, never a fixed threshold (FR-019).
 
 **A `VETO` is returned only when the reading is significantly worse than baseline at the stated confidence (FR-020).** A reading that is merely off-baseline, or off-baseline without reaching significance, is a `PASS` — the burden of proof sits with the veto, not with the trade.
 
-**Invariant**: `gate_open` is true **only** for `PASS`. `NO_BASELINE` is distinct from both `PASS` and `VETO` and never opens the gate (FR-021, FR-025).
+**Invariant**: `requires_acknowledgement` is false **only** for `PASS`. `NO_BASELINE` is distinct from both `PASS` and `VETO`, and like `VETO` it demands acknowledgement — but **no outcome prevents the user proceeding** (FR-021, FR-025). The system advises; the decision stays with the user.
 
 ---
 
@@ -171,11 +171,13 @@ What the verdict gates.
 | `pair` | (Token, Token) | Drives probe construction |
 | `amount_in` | Decimal | User-specified |
 | `quote` | Quote | Real and executable (FR-026) |
-| `gate_open` | bool | Mirrors the verdict; starts false (FR-024) |
+| `acknowledged` | bool | Set when the user explicitly clicks through a warning (FR-025) |
 
 **Quote**: `{ amount_out, fee_tier, gas_estimate, pool_address, quoted_at }`
 
-**Invariant**: there is no `execute()` path and no signer. `gate_open` governs the availability of a UI affordance only — nothing is ever transmitted to a network (FR-027).
+**Invariant (this scope)**: there is no `execute()` path and no signer — nothing is transmitted to a network (FR-027). The verdict and its acknowledgement are the extent of the action.
+
+**Designed for the stretch**: when wallet connection and execution land, acknowledging a warning submits the trade rather than ending the flow. No entity changes — only what happens after `acknowledged` becomes true.
 
 ---
 
@@ -226,7 +228,7 @@ IDLE → QUOTING → FETCHING_POOLS → [product check] → ELICITING (3 reps ×
      → COMPUTING → COMPARING → VERDICT
 ```
 
-`gate_open` is false in every state except a `VERDICT` of `PASS`. Partial results stream to the client throughout `ELICITING` (FR-028).
+No verdict exists until the `VERDICT` state, so nothing is advised before then. Partial results stream to the client throughout `ELICITING` (FR-028).
 
 ---
 

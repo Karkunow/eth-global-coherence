@@ -29,24 +29,29 @@ The operator selects an agent (identified by its underlying model and its system
 
 ---
 
-### User Story 2 - Gate a trade against the baseline (Priority: P2)
+### User Story 2 - Advise on a trade against the baseline (Priority: P2)
 
 A user is about to commit capital through an autonomous agent and wants assurance the agent's reasoning has not degraded since it was last known good.
 
-The user sets up an ordinary trade — a pair and an amount — and receives a real quote. The action that would commit the trade is held closed until the guard runs. The guard performs a fast check, showing each isolated forecast as it arrives together with proof of which model produced it, then compares the result against the stored baseline. If the reading is consistent with the agent's normal behaviour, the trade is released. If the reading is significantly worse than normal, the trade stays blocked. If no baseline exists for this configuration, no verdict is offered at all and the user is directed to calibrate first.
+The user sets up an ordinary trade — a pair and an amount — and receives a real quote. Before committing, the guard runs a fast check, showing each isolated forecast as it arrives together with proof of which model produced it, then compares the result against the stored baseline.
 
-**Why this priority**: This is the capability that makes the health score actionable — it converts a measurement into a decision that protects capital. It depends on P1 and is the primary demonstration of value.
+The system **advises rather than blocks**. If the reading is consistent with the agent's normal behaviour, the user proceeds without friction. If it is significantly worse, the user sees a prominent warning explaining that the agent's reasoning has drifted, and must acknowledge it deliberately before continuing — but the decision remains theirs. If no baseline exists, no verdict is offered and the user is directed to calibrate first.
 
-**Independent Test**: Can be fully tested by calibrating an agent, then setting up a trade and running the guard, and confirming the commit action is released when the reading falls within the baseline and remains blocked when it does not — with each verdict displaying its confidence level and how many repetitions it was based on.
+Advising rather than blocking is deliberate. Coherence is a necessary but not sufficient condition for sound reasoning: an incoherent agent is provably self-contradictory, but that does not establish the trade is unprofitable. Blocking would assert more than the measurement supports.
+
+**Why this priority**: This is the capability that makes the health score actionable — it puts the measurement in front of someone at the moment it matters. It depends on P1 and is the primary demonstration of value.
+
+**Independent Test**: Can be fully tested by calibrating an agent, then setting up a trade and running the guard, and confirming that a within-baseline reading lets the user proceed unimpeded while a significantly-worse reading demands an explicit acknowledgement first — with each verdict displaying its confidence level and how many repetitions it was based on.
 
 **Acceptance Scenarios**:
 
-1. **Given** a stored baseline exists and the user has set up a trade, **When** the commit action is first presented, **Then** it is unavailable and labelled as awaiting a coherence check.
-2. **Given** a check has run and the reading is statistically consistent with the baseline, **When** the verdict is shown, **Then** it reads as a pass, states its confidence level and repetition count, and the commit action becomes available.
-3. **Given** a check has run and the reading is significantly worse than the baseline, **When** the verdict is shown, **Then** it reads as a veto, states its confidence level and repetition count, and the commit action remains unavailable.
-4. **Given** no baseline exists for the selected agent configuration, **When** the user attempts a check, **Then** the system renders neither a pass nor a veto, and instead directs the user to run calibration first.
-5. **Given** a check is running, **When** each isolated forecast returns, **Then** the user sees it appear along with evidence of which model produced it, rather than waiting for a single result at the end.
-6. **Given** the number of repetitions requested is below the minimum needed to measure spread, **When** the check completes, **Then** the system presents a provisional reading explicitly marked as not statistically confident and renders neither verdict.
+1. **Given** a stored baseline exists and the user has set up a trade, **When** the commit action is first presented, **Then** it is labelled as awaiting a coherence check and no verdict is yet displayed.
+2. **Given** a check has run and the reading is statistically consistent with the baseline, **When** the verdict is shown, **Then** it reads as a pass, states its confidence level and repetition count, and the user may proceed without further friction.
+3. **Given** a check has run and the reading is significantly worse than the baseline, **When** the verdict is shown, **Then** it reads as a veto with a prominent warning, states its confidence level and repetition count, and the user must explicitly acknowledge the warning before proceeding.
+4. **Given** a veto warning is displayed, **When** the user reads it, **Then** it states that drift indicates the agent's reasoning has changed and does NOT claim the trade is unprofitable.
+5. **Given** no baseline exists for the selected agent configuration, **When** the user attempts a check, **Then** the system renders neither a pass nor a veto, and instead directs the user to run calibration first.
+6. **Given** a check is running, **When** each isolated forecast returns, **Then** the user sees it appear along with evidence of which model produced it, rather than waiting for a single result at the end.
+7. **Given** the number of repetitions requested is below the minimum needed to measure spread, **When** the check completes, **Then** the system presents a provisional reading explicitly marked as not statistically confident and renders neither verdict.
 
 ---
 
@@ -121,12 +126,13 @@ The calling agent requests a check for a trading pair and receives a structured 
 - **FR-022**: System MUST display, alongside every verdict, the confidence level applied and the number of repetitions the reading is based on.
 - **FR-023**: System MUST surface a reading that is significantly better than baseline as a pass accompanied by a notice that the configuration appears to have changed.
 
-**Gating**
+**Advisory gating**
 
-- **FR-024**: System MUST present the trade-commit action in an unavailable state until a verdict has been rendered.
-- **FR-025**: System MUST make the trade-commit action available on a pass and keep it unavailable on a veto or a no-baseline outcome.
+- **FR-024**: System MUST render a verdict before the user can commit a trade, and MUST display that verdict alongside the trade.
+- **FR-025**: System MUST NOT prevent the user from proceeding. On a veto or no-baseline outcome it MUST require an explicit, deliberate acknowledgement of the warning before the commit action proceeds; on a pass it MUST allow the commit action without additional friction.
+- **FR-025a**: The warning shown on a veto MUST state what was measured and what it does and does not imply — specifically that drift from baseline indicates the agent's reasoning has changed, not that the trade is unprofitable.
 - **FR-026**: System MUST obtain a real, executable quote for the user's trade before gating it.
-- **FR-027**: System MUST NOT transmit any transaction to a live network; the gate itself is the extent of the action.
+- **FR-027**: System MUST NOT transmit any transaction to a live network in this scope; the advisory verdict and its acknowledgement are the extent of the action. (Wallet connection and real execution are an explicitly scoped stretch — see Out of Scope.)
 
 **Interfaces**
 
@@ -187,7 +193,7 @@ The following are externally imposed constraints on this feature rather than fre
 
 ## Out of Scope
 
-- On-chain transaction submission, wallet connection, or transaction signing.
+- **Wallet connection, transaction signing, and on-chain submission — deferred as a scoped stretch goal, not abandoned.** The advisory model is designed to accommodate it: when execution lands, acknowledging the warning submits the trade rather than ending the flow. Deferred because the approval → permit2 → submit path costs roughly 2 hours and puts real funds at risk during judging.
 - Multi-user accounts, authentication, or authorization.
 - Time-based baseline expiry or scheduled re-calibration.
 - Sweeping multiple probes per check to strengthen the constraint set.

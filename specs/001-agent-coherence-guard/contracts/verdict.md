@@ -9,7 +9,7 @@
 ```json
 {
   "outcome": "PASS | VETO | NO_BASELINE | INSUFFICIENT_SAMPLES",
-  "gate_open": false,
+  "requires_acknowledgement": true,
   "confidence": 0.95,
   "note": null,
 
@@ -71,7 +71,9 @@
 
 **`outcome`** — exactly one of four values. `NO_BASELINE` and `INSUFFICIENT_SAMPLES` are first-class outcomes, not errors: the run succeeded, the system is declining to render a judgment. A client that treats them as failures is wrong.
 
-**`gate_open`** — true **only** when `outcome == "PASS"`. This is an invariant, not a convention; a client may rely on it without re-deriving the decision. (FR-025)
+**`requires_acknowledgement`** — true when `outcome` is `VETO`, `NO_BASELINE`, or `INSUFFICIENT_SAMPLES`; false on `PASS`. A conforming client must obtain an explicit, deliberate user acknowledgement before proceeding when this is true — but **must not prevent proceeding**. The system advises; it does not block. (FR-025)
+
+Blocking would assert more than the measurement supports: incoherence proves the agent contradicts itself, not that the trade is unprofitable. The warning text must say so (FR-025a).
 
 **`confidence`** — always present, always displayed by any conforming client. (FR-022)
 

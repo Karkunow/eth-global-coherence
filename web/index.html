@@ -584,6 +584,55 @@ async function ensureWalletOnChain(chainId) {
   }
 }
 
+const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
+const WETH_BY_CHAIN = {
+  1: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+  8453: '0x4200000000000000000000000000000000000006',
+};
+const MAX_UINT256 = 'f'.repeat(64);
+
+function pad32(hexNoPrefix) { return hexNoPrefix.toLowerCase().padStart(64, '0'); }
+
+// The Trading API's own isTokenApprovalApplicable/permitTransaction fields
+// came back null/unreliable in our own testing even for a wallet that had
+// never approved anything (see FEEDBACK.md) -- checking the real on-chain
+// ERC-20 allowance directly is the only way to know for sure whether
+// Permit2 can actually move this wallet's WETH. Without this, a
+// well-formed swap signs fine but reverts on send with no clear signal
+// why (confirmed live: a real wallet's WETH->Permit2 allowance was 0,
+// and every send attempt silently failed to broadcast).
+async function ensurePermit2Allowance(chainId, ownerAddress, status) {
+  const weth = WETH_BY_CHAIN[chainId];
+  const allowanceData = '0xdd62ed3e' + pad32(ownerAddress.slice(2)) + pad32(PERMIT2_ADDRESS.slice(2));
+  const result = await window.ethereum.request({
+    method: 'eth_call',
+    params: [{ to: weth, data: allowanceData }, 'latest'],
+  });
+  const allowance = BigInt(result);
+  if (allowance > 0n) return;
+
+  status.textContent = 'This wallet has never approved Permit2 for WETH — confirm the one-time approval in your wallet…';
+  const approveData = '0x095ea7b3' + pad32(PERMIT2_ADDRESS.slice(2)) + MAX_UINT256;
+  const txHash = await window.ethereum.request({
+    method: 'eth_sendTransaction',
+    params: [{ from: ownerAddress, to: weth, data: approveData }],
+  });
+  status.textContent = `Approval sent (${txHash.slice(0, 10)}…) — waiting for it to be mined before continuing…`;
+  // Poll for the receipt rather than assuming instant confirmation -- the
+  // swap below would just revert again if we raced ahead of the approval
+  // actually landing on-chain.
+  for (let i = 0; i < 60; i++) {
+    await new Promise(r => setTimeout(r, 3000));
+    const receipt = await window.ethereum.request({ method: 'eth_getTransactionReceipt', params: [txHash] });
+    if (receipt) {
+      if (receipt.status !== '0x1') throw new Error('Permit2 approval transaction reverted');
+      status.textContent = 'Approval confirmed. Continuing…';
+      return;
+    }
+  }
+  throw new Error('Approval transaction did not confirm in time — try again once it lands.');
+}
+
 document.getElementById('connect-wallet-btn').addEventListener('click', async () => {
   const status = document.getElementById('wallet-status');
   if (!window.ethereum) {
@@ -614,6 +663,8 @@ document.getElementById('wallet-sign-btn').addEventListener('click', async () =>
   try {
     status.textContent = 'Switching wallet to the right network…';
     await ensureWalletOnChain(chainId);
+
+    await ensurePermit2Allowance(chainId, connectedWallet, status);
 
     status.textContent = 'Fetching quote for your wallet…';
     const qParams = new URLSearchParams({
